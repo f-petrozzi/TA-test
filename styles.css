@@ -1,0 +1,49 @@
+/* Global theme tokens for the Streamlit app. Extend this file as new UI
+   elements are added so styling stays centralized. */
+:root {
+  --bulls-green: #065735;
+  --bulls-gold: #f0b429;
+  --assistant-bg: #f4f7f5;
+  --assistant-border: #dbe2dd;
+}
+
+.chat-welcome {
+  text-align: center;
+  margin: 2rem 0 1rem;
+}
+
+.chat-welcome h2 {
+  margin-bottom: 0.5rem;
+}
+
+.tool-picker-card {
+  background: var(--assistant-bg);
+  border: 1px solid var(--assistant-border);
+  border-radius: 16px;
+  padding: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.assistant-card {
+  background: #fff;
+  border: 1px dashed var(--assistant-border);
+  border-radius: 12px;
+  padding: 0.5rem;
+  height: 100%;
+}
+
+.assistant-card .stButton > button {
+  border-radius: 10px;
+  font-weight: 600;
+  background: var(--bulls-green);
+  color: #fff;
+}
+
+.assistant-card .stButton > button:hover {
+  background: #0a6d42;
+}
+
+.recent-actions-card textarea {
+  font-family: inherit;
+  font-size: 0.9rem;
+}

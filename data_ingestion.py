@@ -1,0 +1,446 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import re
+import uuid
+from pathlib import Path
+from typing import Iterable, List, Optional, Dict
+from datetime import datetime
+
+from dotenv import load_dotenv
+from supabase import Client, create_client
+import requests
+
+load_dotenv()
+
+# env helpers
+HUGGINGFACE_MODEL = os.getenv("HUGGINGFACE_EMBEDDING_MODEL", "google/embeddinggemma-300m")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_API_KEY")
+
+DEFAULT_DOCUMENTS_TABLE = os.getenv("SUPABASE_DOCUMENTS_TABLE", "documents")
+DEFAULT_CHUNKS_TABLE = os.getenv("SUPABASE_CHUNKS_TABLE", "chunks")
+
+
+def require_env(value: Optional[str], name: str) -> str:
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+
+def get_supabase_client(url: Optional[str], key: Optional[str]) -> Client:
+    url = require_env(url, "SUPABASE_URL")
+    key = require_env(key, "SUPABASE_SERVICE_ROLE_KEY")
+    return create_client(url, key)
+
+
+# constants & regex
+MD_EXT = {".md"}
+
+_WS = re.compile(r"[ \t\f\v]+")
+_NL = re.compile(r"\n{3,}")
+PARA_BREAK = re.compile(r"\n\s*\n")
+BULLET = re.compile(r"^\s*(?:[\u2022\-\*\u25E6]|\d+\.)\s+")
+YAML_FRONT = re.compile(r"^---\s*\n.*?\n---\s*\n", re.S)
+USF_LINK = re.compile(r"https?://(?:www\.)?usf\.edu[^\s\]\)]+", re.I)
+
+
+# text helpers
+def first_usf_url(text: str) -> Optional[str]:
+    """Return the first usf.edu URL (without fragment) if present."""
+    if not text:
+        return None
+    m = USF_LINK.search(text)
+    if not m:
+        return None
+    url = m.group(0)
+    return url.split("#", 1)[0]
+
+def derive_category(path: Path) -> str:
+    """Use top-level folder name as category when available; default 'USF'."""
+    try:
+        parts = path.parts
+        return parts[0] if len(parts) > 1 else "USF"
+    except Exception:
+        return "USF"
+
+def sha1(s: str) -> str:
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()
+
+def clean_text(s: str) -> str:
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = YAML_FRONT.sub("", s, count=1)  # strip YAML front-matter if present
+    s = _WS.sub(" ", s).strip()
+    s = _NL.sub("\n\n", s)
+    return s.strip()
+
+def reflow_paragraphs(text: str) -> str:
+    """
+    - Keep real paragraph breaks (blank lines)
+    - Join hard-wrapped lines within a paragraph into one line
+    - Preserve bullet lines
+    - De-hyphenate soft wraps: immuniza-\ntion -> immunization
+    """
+    text = re.sub(r"-\n(?=[a-z])", "", text)
+    paras = PARA_BREAK.split(text)
+    out: List[str] = []
+    for p in paras:
+        lines = [ln.strip() for ln in p.split("\n") if ln.strip()]
+        if not lines:
+            out.append("")
+            continue
+        buf: List[str] = []
+        for ln in lines:
+            if BULLET.match(ln):
+                if buf:
+                    out.append(" ".join(buf))
+                    buf = []
+                out.append(ln)
+            else:
+                buf.append(ln)
+        if buf:
+            out.append(" ".join(buf))
+        out.append("")
+    return "\n".join(out).strip()
+
+def group_faq_blocks(text: str) -> str:
+    """Merge Q + A style lines into larger blocks; pass-through if none."""
+    q_start = re.compile(r"^\s*(?:Q[:\-\)]|Question\b|How\b|What\b|When\b|Where\b|Why\b|Can\b|Do\b|Does\b|Is\b|Are\b)", re.I)
+    a_mark = re.compile(r"^\s*A[:\-\)]\s*", re.I)
+    lines = text.split("\n")
+    blocks, cur = [], []
+    saw_q = False
+    for ln in lines:
+        if not ln.strip():
+            if cur:
+                blocks.append("\n".join(cur))
+                cur = []
+            blocks.append("")
+            continue
+        if q_start.match(ln):
+            saw_q = True
+            if cur:
+                blocks.append("\n".join(cur))
+                cur = []
+            cur.append(ln)
+        else:
+            cur.append(a_mark.sub("", ln))
+    if cur:
+        blocks.append("\n".join(cur))
+    return "\n\n".join(blocks) if saw_q else text
+
+def recursive_chunks(text: str, chunk_size: int, overlap: int) -> List[str]:
+    if len(text) <= chunk_size:
+        return [text]
+    paras = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    pieces, buf = [], ""
+    for p in paras:
+        if len(buf) + len(p) + 2 <= chunk_size:
+            buf = (buf + "\n\n" + p).strip() if buf else p
+        else:
+            if buf:
+                pieces.append(buf)
+            if len(p) <= chunk_size:
+                buf = p
+            else:
+                sents = re.split(r"(?<=[.!?])\s+", p)
+                sbuf = ""
+                for s in sents:
+                    if len(sbuf) + len(s) + 1 <= chunk_size:
+                        sbuf = (sbuf + " " + s).strip() if sbuf else s
+                    else:
+                        if sbuf:
+                            pieces.append(sbuf)
+                        step = max(1, chunk_size - overlap)
+                        for i in range(0, len(s), step):
+                            pieces.append(s[i:i + chunk_size])
+                        sbuf = ""
+                if sbuf:
+                    pieces.append(sbuf)
+                buf = ""
+    if buf:
+        pieces.append(buf)
+    out, cur = [], ""
+    for p in pieces:
+        if not cur:
+            cur = p
+        elif len(cur) + len(p) + 1 <= chunk_size:
+            cur = cur + "\n" + p
+        else:
+            out.append(cur)
+            cur = p
+    if cur:
+        out.append(cur)
+    if overlap > 0 and len(out) > 1:
+        with_ol = [out[0]]
+        for i in range(1, len(out)):
+            prev_tail = out[i - 1][-overlap:]
+            with_ol.append((prev_tail + out[i]) if prev_tail else out[i])
+        out = with_ol
+    return out
+
+def glue_short_chunks(chunks: List[str], min_chars: int = 300) -> List[str]:
+    if not chunks:
+        return chunks
+    out: List[str] = []
+    for ch in chunks:
+        if out and len(out[-1]) < min_chars:
+            out[-1] = (out[-1].rstrip() + "\n\n" + ch.lstrip()).strip()
+        else:
+            out.append(ch)
+    return out
+
+def fingerprint(text: str) -> str:
+    norm = " ".join(text.lower().split())
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest()
+
+def iter_md_files(root: Path) -> Iterable[Path]:
+    for p in sorted(root.rglob("*.md")):
+        if p.is_file():
+            yield p
+
+def md_title(text: str, fallback: str) -> str:
+    m = re.search(r"^#\s+(.*)$", text, flags=re.M)
+    title = (m.group(1).strip() if m else None) or fallback
+    return title[:200]
+
+# embedding + supabase
+def _hf_request(payload: dict) -> list:
+    model = require_env(HUGGINGFACE_MODEL, "HUGGINGFACE_EMBEDDING_MODEL")
+    token = require_env(os.getenv("HUGGINGFACEHUB_API_TOKEN"), "HUGGINGFACEHUB_API_TOKEN")
+    url = f"https://router.huggingface.co/hf-inference/models/{model}/pipeline/feature-extraction"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    resp = requests.post(url, headers=headers, json=payload, timeout=120)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Hugging Face error ({resp.status_code}): {resp.text}")
+    data = resp.json()
+    if not isinstance(data, list):
+        raise RuntimeError(f"Unexpected Hugging Face response: {data}")
+    return data
+
+def embed_texts(texts: List[str], batch: int = 8) -> List[List[float]]:
+    vectors: List[List[float]] = []
+    for i in range(0, len(texts), max(1, batch)):
+        subset = texts[i:i + batch]
+        payload = {"inputs": subset, "options": {"wait_for_model": True}}
+        data = _hf_request(payload)
+        # The inference API returns one embedding per input (list of floats) or dict with "embedding".
+        parsed: List[List[float]] = []
+        for item in data:
+            vec = item.get("embedding") if isinstance(item, dict) else item
+            if not isinstance(vec, list):
+                raise RuntimeError(f"Invalid embedding payload: {item}")
+            parsed.append([float(x) for x in vec])
+        if len(parsed) != len(subset):
+            raise RuntimeError("Mismatch between inputs and embeddings from Hugging Face.")
+        vectors.extend(parsed)
+    return vectors
+
+def ensure_document(
+    client: Client,
+    documents_table: str,
+    doc_fp: str,
+    title: str,
+    source_path: str,
+    category: str,
+) -> tuple[str, bool]:
+    """Return (document_id, existed)."""
+    try:
+        resp = (
+            client.table(documents_table)
+            .select("id, checksum")
+            .eq("checksum", doc_fp)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(resp, "data", []) or []
+        if rows:
+            return rows[0]["id"], True
+    except Exception:
+        pass
+
+    doc_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    record = {
+        "id": doc_id,
+        "title": title,
+        "source_path": source_path,
+        "category": category,
+        "checksum": doc_fp,
+        "created_at": now,
+        "updated_at": now,
+    }
+    client.table(documents_table).insert(record).execute()
+    return doc_id, False
+
+def delete_existing_chunks(client: Client, chunks_table: str, document_id: str) -> None:
+    client.table(chunks_table).delete().eq("document_id", document_id).execute()
+
+def insert_chunks(
+    client: Client,
+    chunks_table: str,
+    document_id: str,
+    chunks: List[str],
+    titles: List[str],
+    metas: List[Dict[str, object]],
+    embeddings: List[List[float]],
+) -> None:
+    rows = []
+    for idx, (content, title, meta, embed) in enumerate(zip(chunks, titles, metas, embeddings)):
+        rows.append({
+            "id": str(uuid.uuid4()),
+            "document_id": document_id,
+            "chunk_index": idx,
+            "content": content,
+            "section_title": title,
+            "metadata": meta,
+            "embedding": embed,
+            "chunk_fp": meta["chunk_fp"],
+            "created_at": datetime.utcnow().isoformat(timespec="seconds"),
+        })
+    if rows:
+        client.table(chunks_table).upsert(rows, on_conflict="document_id,chunk_index").execute()
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="RAG ingestion (MD → chunks → Azure embeddings → Supabase pgvector)"
+    )
+    ap.add_argument("--source", default="data/raw", help="Folder containing .md files (recurses)")
+    ap.add_argument("--supabase-url", default=SUPABASE_URL, help="Supabase project URL")
+    ap.add_argument("--supabase-key", default=SUPABASE_SERVICE_KEY, help="Supabase service role key")
+    ap.add_argument("--documents-table", default=DEFAULT_DOCUMENTS_TABLE, help="Supabase documents table")
+    ap.add_argument("--chunks-table", default=DEFAULT_CHUNKS_TABLE, help="Supabase chunks table")
+    ap.add_argument("--chunk", type=int, default=900, help="Target chunk size (chars)")
+    ap.add_argument("--overlap", type=int, default=150, help="Chunk overlap (chars)")
+    ap.add_argument("--batch", type=int, default=32, help="Embedding batch size")
+    ap.add_argument(
+        "--skip-unchanged",
+        action="store_true",
+        default=False,
+        help="Skip docs whose checksum already exists in Supabase",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Parse and report without writing to Supabase",
+    )
+    args = ap.parse_args()
+
+    src = Path(args.source)
+    if not src.exists():
+        raise SystemExit(f"[!] Source not found: {src}")
+
+    client = None if args.dry_run else get_supabase_client(args.supabase_url, args.supabase_key)
+
+    scanned = added = skipped = 0
+
+    for path in iter_md_files(src):
+        scanned += 1
+        try:
+            raw = path.read_text(encoding="utf-8", errors="ignore")
+            if not raw.strip():
+                print(f"[skip empty] {path}")
+                skipped += 1
+                continue
+
+            text = group_faq_blocks(reflow_paragraphs(clean_text(raw)))
+            if not text.strip():
+                print(f"[skip empty] {path}")
+                skipped += 1
+                continue
+
+            doc_fp = sha1(" ".join(text.split()))
+            base_id = f"{path.relative_to(src)}".replace("\\", "/")
+            title = md_title(text, fallback=path.stem)
+            category = derive_category(path.relative_to(src))
+            canonical = first_usf_url(raw) or ""
+
+            if args.dry_run:
+                print(f"[dry] {base_id} checksum={doc_fp[:12]} len={len(text)}")
+                continue
+
+            document_id, existed = ensure_document(
+                client,
+                args.documents_table,
+                doc_fp,
+                title,
+                base_id,
+                category,
+            )
+
+            if existed and args.skip_unchanged:
+                print(f"[skip unchanged] {path}")
+                skipped += 1
+                continue
+
+            raw_chunks = recursive_chunks(text, args.chunk, args.overlap)
+            raw_chunks = glue_short_chunks(raw_chunks, min_chars=300)
+
+            seen = set()
+            chunks: List[str] = []
+            metas: List[Dict[str, object]] = []
+            for ch in raw_chunks:
+                fp = fingerprint(ch)
+                if fp in seen:
+                    continue
+                seen.add(fp)
+                chunks.append(ch)
+                metas.append({
+                    "source": base_id,
+                    "filename": path.name,
+                    "relpath": base_id,
+                    "len": len(ch),
+                    "doc_fp": doc_fp,
+                    "chunk_fp": fp,
+                    "category": category,
+                    "canonical": canonical,
+                })
+
+            if not chunks:
+                print(f"[skip no-chunks] {path}")
+                skipped += 1
+                continue
+
+            if existed:
+                delete_existing_chunks(client, args.chunks_table, document_id)
+
+            embeddings = embed_texts(chunks, batch=args.batch)
+            titles = [title] * len(chunks)
+            metas_for_rows = []
+            for meta in metas:
+                metas_for_rows.append({**meta})
+
+            insert_chunks(
+                client,
+                args.chunks_table,
+                document_id,
+                chunks,
+                titles,
+                metas_for_rows,
+                embeddings,
+            )
+
+            added += len(chunks)
+            print(f"[ok] {path} → {len(chunks)} chunks")
+
+        except Exception as e:
+            print(f"[error] {path}: {e}")
+            skipped += 1
+
+    print("\n=== Ingestion Summary ===")
+    print(f"Scanned files : {scanned}")
+    print(f"Chunks added  : {added}")
+    print(f"Skipped       : {skipped}")
+    if not args.dry_run:
+        print(f"Supabase URL  : {args.supabase_url}")
+        print(f"Documents tbl : {args.documents_table}")
+        print(f"Chunks tbl    : {args.chunks_table}")
+        print(f"Embed model   : {require_env(HUGGINGFACE_MODEL, 'HUGGINGFACE_EMBEDDING_MODEL')}")
+        print(f"Chunk/Overlap : {args.chunk}/{args.overlap}")
+
+if __name__ == "__main__":
+    main()
