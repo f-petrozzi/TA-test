@@ -1,5 +1,6 @@
 import base64
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from typing import Any, List, Optional
@@ -184,7 +185,7 @@ class GoogleWorkspaceTools:
         attendees: Optional[List[str]] = None,
         description: str = "",
         location: str = "",
-    ) -> str:
+    ) -> dict[str, str]:
         start_iso = self._normalize_iso(start_iso)
         start_iso, end_iso = self._time_range(start_iso, duration_minutes)
         service = self._build_service("calendar", "v3")
@@ -200,9 +201,31 @@ class GoogleWorkspaceTools:
             "start": {"dateTime": start_iso},
             "end": {"dateTime": end_iso},
             "attendees": attendee_entries,
+            "conferenceData": {
+                "createRequest": {
+                    "requestId": f"meet-{uuid.uuid4()}",
+                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                }
+            },
         }
         try:
-            result = service.events().insert(calendarId="primary", body=event_body, sendUpdates="all").execute()
+            result = (
+                service.events()
+                .insert(
+                    calendarId="primary",
+                    body=event_body,
+                    sendUpdates="all",
+                    conferenceDataVersion=1,
+                )
+                .execute()
+            )
         except HttpError as e:
             raise GoogleWorkspaceError(f"Calendar insert error: {e}") from e
-        return result.get("id", "event-created")
+        hangout_link = result.get("hangoutLink")
+        if not hangout_link:
+            conference = (result.get("conferenceData") or {}).get("entryPoints") or []
+            hangout_link = conference[0].get("uri") if conference else ""
+        return {
+            "event_id": result.get("id", "event-created"),
+            "hangout_link": hangout_link,
+        }

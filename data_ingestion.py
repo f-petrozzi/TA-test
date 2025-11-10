@@ -23,6 +23,7 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPA
 
 DEFAULT_DOCUMENTS_TABLE = os.getenv("SUPABASE_DOCUMENTS_TABLE", "documents")
 DEFAULT_CHUNKS_TABLE = os.getenv("SUPABASE_CHUNKS_TABLE", "chunks")
+ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 
 
 def require_env(value: Optional[str], name: str) -> str:
@@ -304,6 +305,14 @@ def insert_chunks(
     if rows:
         client.table(chunks_table).upsert(rows, on_conflict="document_id,chunk_index").execute()
 
+
+def purge_existing_corpus(client: Client, documents_table: str, chunks_table: str) -> None:
+    """Remove all existing chunks/documents ahead of a full refresh."""
+    print(f"[refresh] Clearing existing data from '{chunks_table}' and '{documents_table}' …")
+    client.table(chunks_table).delete().neq("id", ZERO_UUID).execute()
+    client.table(documents_table).delete().neq("id", ZERO_UUID).execute()
+    print("[refresh] Tables emptied.")
+
 def main():
     ap = argparse.ArgumentParser(
         description="RAG ingestion (MD → chunks → Azure embeddings → Supabase pgvector)"
@@ -335,6 +344,9 @@ def main():
         raise SystemExit(f"[!] Source not found: {src}")
 
     client = None if args.dry_run else get_supabase_client(args.supabase_url, args.supabase_key)
+
+    if not args.dry_run:
+        purge_existing_corpus(client, args.documents_table, args.chunks_table)
 
     scanned = added = skipped = 0
 

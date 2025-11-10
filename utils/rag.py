@@ -13,13 +13,6 @@ from utils.supabase_client import get_supabase_client
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are the USF Onboarding Assistant for Admissions, Orientation, and Registrar. "
-    "Answer ONLY from the provided CONTEXT. Be concise. Add inline [Source N] markers "
-    "that match the numbered sources in CONTEXT. If an answer is not in CONTEXT, say "
-    "you don't know and suggest the correct USF office or link to contact."
-)
-
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
@@ -41,13 +34,12 @@ class MCPClientProtocol(Protocol):
 
 def get_system_prompt() -> str:
     text = os.getenv("RAG_SYSTEM_PROMPT")
-    if text:
-        try:
-            text = bytes(text, "utf-8").decode("unicode_escape")
-        except Exception:
-            pass
+    if not text:
+        raise RuntimeError("Missing required environment variable: RAG_SYSTEM_PROMPT")
+    try:
+        return bytes(text, "utf-8").decode("unicode_escape")
+    except Exception:
         return text
-    return DEFAULT_SYSTEM_PROMPT
 
 def require_env(value: Optional[str], name: str) -> str:
     if not value:
@@ -200,17 +192,56 @@ def azure_chat_stream(messages: List[Dict[str, str]], temperature: float = 0.2) 
             if delta and delta.content:
                 yield delta.content
 
+def _augment_query(user_text: str) -> str:
+    lowered = (user_text or "").lower()
+    keywords: List[str] = []
+
+    if "orientation" in lowered:
+        keywords.extend([
+            "orientation",
+            "orientation dates",
+            "orientation fees",
+            "orientation schedule",
+            "myorientation",
+        ])
+        if "international" in lowered:
+            keywords.extend([
+                "international orientation",
+                "glo-bull beginnings",
+                "international student orientation",
+                "mybullspath",
+            ])
+        if any(term in lowered for term in ("freshman", "first-year", "ftic")):
+            keywords.append("first-year orientation")
+
+    if "international" in lowered and "orientation" not in lowered:
+        keywords.extend([
+            "international student services",
+            "glo-bull beginnings",
+        ])
+
+    if keywords:
+        dedup = []
+        seen = set()
+        for word in keywords:
+            if word not in seen:
+                dedup.append(word)
+                seen.add(word)
+        return f"{user_text}\n\nRelated keywords: {', '.join(dedup)}"
+    return user_text
+
+
 def generate_with_rag(
     user_text: str,
-    system_prompt: Optional[str] = None,
     match_count: Optional[int] = None,
     mcp_client: Optional[MCPClientProtocol] = None,
 ) -> Generator[Tuple[str, Dict[str, Any]], None, None]:
+    query = _augment_query(user_text)
     if mcp_client:
-        hits = mcp_client.retrieve_context(user_text, match_count=match_count)
+        hits = mcp_client.retrieve_context(query, match_count=match_count)
     else:
-        hits = retrieve_matches(user_text, match_count=match_count)
-    system = system_prompt if system_prompt else get_system_prompt()
+        hits = retrieve_matches(query, match_count=match_count)
+    system = get_system_prompt()
     ctx = format_context(hits)
 
     messages = [

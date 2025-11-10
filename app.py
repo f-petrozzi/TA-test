@@ -215,16 +215,16 @@ def _maybe_auto_open_assistant(response_text: str | None) -> None:
 
 def _generate_email_draft(student_message: str, placeholder) -> str:
     prompt = (
-        "You are a USF Admissions, Orientation, and Registrar assistant. Draft a professional "
-        "email reply to the student inquiry below. Cite policy details using the provided context. "
-        "Keep it concise, friendly, and actionable.\n\n"
+        "You are a seasoned USF administrator crafting an official reply. Draft a professional "
+        "email response to the student inquiry below, including a greeting, concise policy-aligned "
+        "body, and courteous closing. Cite policy details using the provided context and keep the tone "
+        "service-oriented, friendly, and actionable.\n\n"
         f"Student inquiry:\n{student_message}"
     )
     final_text = None
     last_chunk = ""
     for kind, payload in generate_with_rag(
         prompt,
-        system_prompt="You are an experienced USF administrator writing email replies.",
         mcp_client=mcp_client,
     ):
         text = payload.get("text", "")
@@ -239,7 +239,8 @@ def _generate_email_draft(student_message: str, placeholder) -> str:
 
 def _revise_email_draft(current_draft: str, student_message: str, instructions: str, placeholder) -> str:
     prompt = (
-        "You previously drafted this response to a USF student. Update it based on the new instructions.\n\n"
+        "You previously drafted this USF administrative email. Update it based on the new instructions "
+        "while keeping the greeting, body, and closing polished, accurate, and citation-backed.\n\n"
         f"Student inquiry:\n{student_message}\n\n"
         f"Current draft:\n{current_draft}\n\n"
         f"Edit instructions:\n{instructions}\n\n"
@@ -249,7 +250,6 @@ def _revise_email_draft(current_draft: str, student_message: str, instructions: 
     last_chunk = ""
     for kind, payload in generate_with_rag(
         prompt,
-        system_prompt="You revise administrative email drafts with high accuracy.",
         mcp_client=mcp_client,
     ):
         text = payload.get("text", "")
@@ -488,7 +488,7 @@ def _create_meeting_event() -> None:
         st.warning("No meeting plan to create. Check availability first.")
         return
     try:
-        event_id = mcp_client.create_event(
+        event_info = mcp_client.create_event(
             plan["summary"],
             plan["start"],
             plan["duration"],
@@ -501,7 +501,11 @@ def _create_meeting_event() -> None:
             st.error(str(e))
         return
 
+    event_id = event_info.get("event_id", "event-created")
+    meet_link = event_info.get("hangout_link", "")
     confirmation = f"Calendar event created for {plan['summary']} (id: {event_id})."
+    if meet_link:
+        confirmation += f"\nGoogle Meet: {meet_link}"
     with st.chat_message("assistant"):
         st.success(confirmation)
     out_toks = estimate_tokens(confirmation)
@@ -515,7 +519,13 @@ def _create_meeting_event() -> None:
     mcp_client.log_interaction(
         st.session_state.current_session_id,
         "meeting_created",
-        {"summary": plan["summary"], "start": plan["start"], "duration": plan["duration"], "event_id": event_id},
+        {
+            "summary": plan["summary"],
+            "start": plan["start"],
+            "duration": plan["duration"],
+            "event_id": event_id,
+            "hangout_link": meet_link,
+        },
     )
     meeting_action = {
         "summary": plan["summary"],
@@ -524,6 +534,7 @@ def _create_meeting_event() -> None:
         "attendees": plan.get("attendees", []),
         "location": plan.get("location", ""),
         "event_id": event_id,
+        "meeting_link": meet_link,
     }
     _queue_action_collapse("meeting", meeting_action)
     st.session_state.pending_meeting = None
@@ -658,14 +669,61 @@ def _render_meeting_builder() -> None:
     else:
         st.info("No meeting plan yet. Enter details above and click Check Availability.")
 
+st.markdown("""
+<style>
+[data-testid="stAppViewContainer"] .block-container {
+  padding-bottom: 0 !important;
+}
+
+[data-testid="stAppViewContainer"] section > div { padding-bottom: 0 !important; }
+[data-testid="stAppViewContainer"] section > div > div { padding-bottom: 0 !important; }
+</style>
+""", unsafe_allow_html=True)
+
 # Login/Register Page
 if not st.session_state.authenticated:
+    st.markdown(
+        """
+        <style>
+        header[data-testid="stHeader"],
+        div[data-testid="stToolbar"],
+        div[data-testid="stDecoration"] {
+            display: none !important;
+            height: 0 !important;
+            padding: 0 !important;
+        }
+        [data-testid="stAppViewContainer"],
+        [data-testid="stAppViewContainer"] > .main,
+        [data-testid="stAppViewContainer"] > .main > div {
+            padding-top: 0 !important;
+            margin-top: 0 !important;
+        }
+        .block-container {
+            padding-top: 38vh !important;
+            margin-top: 0 !important;
+            padding-bottom: 0 !important;
+            margin-bottom: 0 !important;
+        }
+        .hero-fixed {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 38vh;
+            z-index: 0;
+        }
+        </style>
+        <div class="usf-hero hero-fixed">
+            <h1 class="hero-heading"><span class="emoji">🐂</span>USF Campus Concierge</h1>
+            <p>AI Assistant for Registration, Orientation, & Admissions</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        st.title("🐂 USF Campus Concierge")
-        st.markdown("### AI Assistant for Registration, Orientation, & Admissions")
-
         tab1, tab2 = st.tabs(["Login", "Register"])
 
         with tab1:
@@ -711,6 +769,8 @@ if not st.session_state.authenticated:
                         else:
                             st.error(f"Registration failed: {message}")
 
+    st.stop()
+
 # Main Application
 else:
     # Sidebar
@@ -726,8 +786,6 @@ else:
             st.session_state.token_total = 0
             st.session_state.limit_reached = False
             st.rerun()
-
-        st.divider()
 
         # New Session with exercise 2
         # Update messages
@@ -746,8 +804,6 @@ else:
                 st.session_state.limit_reached = False
                 st.rerun()
 
-        st.divider()
-
         # Search
         search_query = st.text_input("🔍 Search sessions", key="search_input")
 
@@ -757,27 +813,28 @@ else:
         if sessions:
             st.markdown(f"### 📁 Sessions ({len(sessions)})")
 
-            for session in sessions:
-                session_id = session.get("id")
-                is_current = session_id == st.session_state.current_session_id
-                button_type = "primary" if is_current else "secondary"
-                if st.button(
-                    f"💬 {session['session_name']}",
-                    key=f"session_{session_id}",
-                    use_container_width=True,
-                    type=button_type,
-                ):
-                    st.session_state.current_session_id = session_id
-                    db_messages = db.get_session_messages(session_id)
-                    st.session_state.messages = [
-                        {"role": "system", "content": "Assistant configured."}
-                    ] + [
-                        {"role": msg["role"], "content": msg["content"]}
-                        for msg in db_messages
-                    ]
-                    st.session_state.token_total = _recompute_token_total(st.session_state.messages)
-                    st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-                    st.rerun()
+            with st.container(height=500, border=True):
+                for session in sessions:
+                    session_id = session.get("id")
+                    is_current = session_id == st.session_state.current_session_id
+                    button_type = "primary" if is_current else "secondary"
+                    if st.button(
+                        f"💬 {session['session_name']}",
+                        key=f"session_{session_id}",
+                        use_container_width=True,
+                        type=button_type,
+                    ):
+                        st.session_state.current_session_id = session_id
+                        db_messages = db.get_session_messages(session_id)
+                        st.session_state.messages = [
+                            {"role": "system", "content": "Assistant configured."}
+                        ] + [
+                            {"role": msg["role"], "content": msg["content"]}
+                            for msg in db_messages
+                        ]
+                        st.session_state.token_total = _recompute_token_total(st.session_state.messages)
+                        st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                        st.rerun()
         else:
             st.info("No sessions found")
 
@@ -901,6 +958,8 @@ else:
                                 st.write(f"**Location:** {data.get('location') or 'TBD'}")
                                 st.write(f"**Event ID:** {data.get('event_id', 'pending')}")
                                 st.write(f"**Calendar Summary:** {data.get('summary', 'Meeting')}")
+                                if data.get("meeting_link"):
+                                    st.write(f"**Meet Link:** {data.get('meeting_link')}")
                     st.caption("Recent actions collapse automatically after you return to the chat.")
                     st.markdown("</div>", unsafe_allow_html=True)
 

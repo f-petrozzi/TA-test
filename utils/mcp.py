@@ -103,7 +103,7 @@ class _ToolRuntime:
         attendees: Optional[list[str]] = None,
         description: str = "",
         location: str = "",
-    ) -> str:
+    ) -> dict[str, str]:
         return self.google.create_event(
             summary,
             start_iso,
@@ -256,7 +256,10 @@ def _tool_definitions() -> list[mcp_types.Tool]:
             },
             outputSchema={
                 "type": "object",
-                "properties": {"event_id": {"type": "string"}},
+                "properties": {
+                    "event_id": {"type": "string"},
+                    "hangout_link": {"type": "string"},
+                },
                 "required": ["event_id"],
             },
             annotations=annotations_mutating,
@@ -340,7 +343,7 @@ async def _execute_tool(runtime: _ToolRuntime, tool_name: str, args: dict[str, A
         return {"message_id": message_id}
 
     if tool_name == "create_event":
-        event_id = await _run_blocking(
+        event_info = await _run_blocking(
             runtime.create_event,
             args.get("summary", ""),
             args.get("start_iso", ""),
@@ -349,7 +352,12 @@ async def _execute_tool(runtime: _ToolRuntime, tool_name: str, args: dict[str, A
             args.get("description", ""),
             args.get("location", ""),
         )
-        return {"event_id": event_id}
+        if isinstance(event_info, dict):
+            return {
+                "event_id": event_info.get("event_id", ""),
+                "hangout_link": event_info.get("hangout_link", ""),
+            }
+        return {"event_id": event_info or "", "hangout_link": ""}
 
     raise ValueError(f"Unknown tool: {tool_name}")
 
@@ -494,8 +502,22 @@ class SimpleMCPClient:
             "description": description,
             "location": location,
         }
-        result = self._call_tool("create_event", payload)
-        return self._structured(result, "event_id", "")
+        try:
+            result = self._call_tool("create_event", payload)
+            return {
+                "event_id": self._structured(result, "event_id", ""),
+                "hangout_link": self._structured(result, "hangout_link", ""),
+            }
+        except Exception as exc:  # pragma: no cover - fallback safety
+            logger.warning("MCP create_event failed, using direct Google fallback: %s", exc)
+            return self._runtime.create_event(
+                summary,
+                start_iso,
+                duration_minutes,
+                attendees=attendees,
+                description=description,
+                location=location,
+            )
 
 def _extract_error(result: mcp_types.CallToolResult) -> str:
     for block in result.content:
