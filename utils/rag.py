@@ -1,24 +1,21 @@
 import json
 import os
 import re
-from functools import lru_cache
-from typing import Any, Dict, Generator, List, Optional, Tuple, Protocol, TYPE_CHECKING
+from typing import Any, Dict, Generator, List, Optional, Tuple, Protocol
 from urllib.parse import urlparse
 
 import requests
-from openai import OpenAI
 
+from utils.azure_llm import stream_chat
 from utils.supabase_client import get_supabase_client
 
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
-AZURE_CHAT_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 HUGGINGFACE_MODEL = os.getenv("HUGGINGFACE_EMBEDDING_MODEL", "google/embeddinggemma-300m")
+
+AZURE_ORCHESTRATOR_DEPLOYMENT = os.getenv("AZURE_PHI4_ORCHESTRATOR") or os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
 SUPABASE_MATCH_FUNCTION = os.getenv("SUPABASE_MATCH_FUNCTION", "match_document_chunks")
 SUPABASE_DEFAULT_MATCH_COUNT = int(os.getenv("SUPABASE_MATCH_COUNT", "6"))
@@ -46,24 +43,10 @@ def require_env(value: Optional[str], name: str) -> str:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
 
-@lru_cache(maxsize=1)
-def get_azure_client() -> OpenAI:
-    endpoint = require_env(AZURE_OPENAI_ENDPOINT, "AZURE_OPENAI_ENDPOINT")
-    key = require_env(AZURE_OPENAI_API_KEY, "AZURE_OPENAI_API_KEY")
-    # Normalize to the example’s pattern
-    base = endpoint.rstrip("/") + "/"
-    if not base.endswith("openai/v1/"):
-        base += "openai/v1/"
-    return OpenAI(base_url=base, api_key=key)
-
 # Token estimator
 _WORD_OR_PUNC = re.compile(r"\w+|[^\w\s]", re.UNICODE)
 
 def estimate_tokens(text: str) -> int:
-    """
-    Simple, dependency-free token estimate.
-    Roughly counts words + punctuation. Works well enough for a session budget.
-    """
     if not text:
         return 0
     return len(_WORD_OR_PUNC.findall(str(text)))
@@ -177,21 +160,6 @@ def build_sources_block(hits: List[Dict[str, Any]]) -> str:
 
     return "\n".join(lines)
 
-def azure_chat_stream(messages: List[Dict[str, str]], temperature: float = 0.2) -> Generator[str, None, None]:
-    model = require_env(AZURE_CHAT_DEPLOYMENT, "AZURE_OPENAI_DEPLOYMENT")
-    client = get_azure_client()
-    stream = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        stream=True,
-    )
-    for event in stream:
-        for choice in getattr(event, "choices", []):
-            delta = getattr(choice, "delta", None)
-            if delta and delta.content:
-                yield delta.content
-
 def _augment_query(user_text: str) -> str:
     lowered = (user_text or "").lower()
     keywords: List[str] = []
@@ -250,7 +218,7 @@ def generate_with_rag(
     ]
 
     response_text = ""
-    for delta in azure_chat_stream(messages):
+    for delta in stream_chat(AZURE_ORCHESTRATOR_DEPLOYMENT, messages):
         response_text += delta
         yield ("delta", {"text": response_text})
 

@@ -5,7 +5,8 @@ Streamlit concierge for Admissions/Orientation staff that grounds every answer i
 
 ### Key Features (Advanced Techniques)
 - **RAG over Supabase pgvector** – Markdown corpus chunked/embedded with Hugging Face (`google/embeddinggemma-300m`) and retrieved via a Supabase RPC before every response.
-- **MCP-style Agent Tools** – Model Context Protocol wrapper exposes Gmail + Google Calendar operations (`list_recent_emails`, `send_email`, `create_event` with Meet link) plus audit logging.
+- **Azure Phi-4 Multi-Model Stack** – Three dedicated deployments (orchestrator, email specialist, meeting specialist) all accessed via Azure OpenAI so every workflow stays on Phi-4 while allowing task-specific prompting.
+- **Real MCP Tooling** – Model Context Protocol server mediates every Gmail/Calendar, drafting, and planning action (`retrieve_context`, `draft_email`, `plan_meeting`, `send_email`, `create_event`, etc.) with structured audit logs.
 - **Mini Assistants** – Streamlit chat page includes Email/Meeting builders that stream drafts, apply AI edits, send messages, and log recent actions.
 - **Safety & Guardrails** – Prompt-injection detector, token budgeting, citations enforced by the system prompt, and Supabase RLS for per-user chat state.
 
@@ -28,7 +29,8 @@ Streamlit concierge for Admissions/Orientation staff that grounds every answer i
    ```
 2. **Configure Environment**
    - Copy `.env.example` → `.env`.
-   - Fill in Azure OpenAI, Hugging Face, Supabase, and Google OAuth values (same keys go into Streamlit Cloud secrets).
+   - Fill in Azure OpenAI (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`) plus the Phi-4 deployment names `AZURE_PHI4_ORCHESTRATOR`, `AZURE_PHI4_EMAIL`, `AZURE_PHI4_MEETING` (email/meeting fall back to the orchestrator name if omitted).
+   - Provide Hugging Face, Supabase, and Google OAuth values (same keys go into Streamlit Cloud secrets).
 3. **Prep Supabase**
    - Create tables/RPC from `docs/schema.sql` (or Supabase SQL editor) and enable RLS (policies described in `docs/setup_guide.md`).
 4. **Ingest Content**
@@ -40,6 +42,7 @@ Streamlit concierge for Admissions/Orientation staff that grounds every answer i
    ```bash
    streamlit run app.py
    ```
+   (The MCP server auto-launches when the app invokes a tool. You can also run it manually with `python -m utils.mcp serve`.)
 6. **Deploy**
    - Push to GitHub, set secrets in Streamlit Cloud, deploy `app.py`.
 

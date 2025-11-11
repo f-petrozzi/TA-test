@@ -1,11 +1,14 @@
 ## app.py
 import os
+import secrets
+import time as time_module
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 from dotenv import load_dotenv
+from zoneinfo import ZoneInfo
 
 from utils.database import ChatDatabase
 from utils.rag import generate_with_rag, estimate_tokens
@@ -22,6 +25,152 @@ db = ChatDatabase()
 google_tools = GoogleWorkspaceTools()
 mcp_client = SimpleMCPClient(chat_db=db, google_tools=google_tools)
 BASE_DIR = Path(__file__).resolve().parent
+UTC = ZoneInfo("UTC")
+EASTERN = ZoneInfo("America/New_York")
+
+
+def _format_est_timestamp(raw: str | None) -> str:
+    if not raw:
+        return "Unknown"
+    text = raw.strip()
+    if not text:
+        return "Unknown"
+    normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
+    try:
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        est_dt = dt.astimezone(EASTERN)
+        return est_dt.strftime("%b %d, %I:%M %p ET")
+    except ValueError:
+        return text
+
+
+@st.cache_resource
+def _get_persistent_session_store() -> dict[str, dict[str, Any]]:
+    """In-memory token store shared across reruns until cache is cleared."""
+    return {}
+
+
+_SESSION_STORE = _get_persistent_session_store()
+
+
+def _issue_session_token(user_id: str, username: str) -> str:
+    token = secrets.token_urlsafe(32)
+    _SESSION_STORE[token] = {
+        "user_id": user_id,
+        "username": username,
+        "issued_at": datetime.utcnow().isoformat(timespec="seconds"),
+    }
+    return token
+
+
+def _revoke_session_token(token: str | None) -> None:
+    if token:
+        _SESSION_STORE.pop(token, None)
+
+
+def _get_session_from_token(token: str | None) -> dict[str, Any] | None:
+    if not token:
+        return None
+    return _SESSION_STORE.get(token)
+
+
+def _get_query_token() -> str | None:
+    params = st.query_params
+    token_value = params.get("session_token")
+    if token_value is None:
+        return None
+    if isinstance(token_value, list):
+        return token_value[0]
+    return token_value
+
+
+def _maybe_update_query_token(token: str | None) -> None:
+    normalized: dict[str, Any] = {}
+    for key, value in st.query_params.items():
+        normalized[key] = value if not isinstance(value, list) or len(value) > 1 else value[0]
+    if token:
+        if normalized.get("session_token") == token:
+            return
+        normalized["session_token"] = token
+    else:
+        if "session_token" not in normalized:
+            return
+        normalized.pop("session_token", None)
+    st.query_params = normalized
+
+
+class SmoothStreamer:
+    """Buffers model deltas so they appear as rapid word-by-word output."""
+
+    def __init__(
+        self,
+        placeholder,
+        *,
+        min_chars: int = 3,
+        min_words: int = 1,
+        max_lag: float = 0.06,
+        initial_hold: float = 0.18,
+        prebuffer_chars: int = 35,
+    ) -> None:
+        self._placeholder = placeholder
+        self._min_chars = min_chars
+        self._min_words = min_words
+        self._max_lag = max_lag
+        self._initial_hold = initial_hold
+        self._prebuffer_chars = prebuffer_chars
+        self._last_flush = time_module.monotonic()
+        self._rendered = ""
+        self._latest = ""
+        self._started = False
+
+    def update(self, text: str | None) -> None:
+        if not text:
+            return
+        if text == self._latest:
+            return
+        self._latest = text
+        now = time_module.monotonic()
+        delta = text[len(self._rendered) :]
+        if not delta:
+            return
+
+        if not self._started:
+            elapsed = now - self._last_flush
+            if len(text) < self._prebuffer_chars and elapsed < self._initial_hold:
+                return
+            self._flush(text)
+            self._started = True
+            return
+
+        new_words = self._count_words(delta)
+        ready_by_words = new_words >= self._min_words and delta[-1:].isspace()
+        ready_by_chars = len(delta) >= self._min_chars
+        timed_out = (now - self._last_flush) >= self._max_lag
+
+        if ready_by_words or ready_by_chars or timed_out:
+            self._flush(text)
+
+    def finalize(self, final_text: str | None = None) -> None:
+        text = final_text if final_text is not None else self._latest
+        if not text:
+            return
+        if text != self._rendered:
+            self._flush(text)
+        self._started = True
+
+    def _flush(self, text: str) -> None:
+        self._placeholder.write(text)
+        self._rendered = text
+        self._last_flush = time_module.monotonic()
+
+    @staticmethod
+    def _count_words(text: str) -> int:
+        stripped = text.strip()
+        if not stripped:
+            return 0
+        return len(stripped.split())
 
 
 def _inject_global_styles() -> None:
@@ -58,6 +207,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "pending_regen" not in st.session_state:
     st.session_state.pending_regen = False
+if "session_token" not in st.session_state:
+    st.session_state.session_token = None
 st.session_state.setdefault("pending_email", None)
 st.session_state.setdefault("pending_meeting", None)
 st.session_state.setdefault("show_email_builder", False)
@@ -85,6 +236,9 @@ st.session_state.setdefault("pending_action_collapses", [])
 st.session_state.setdefault("show_tool_picker", False)
 st.session_state.setdefault("email_fields_reset_pending", False)
 st.session_state.setdefault("meeting_fields_reset_pending", False)
+st.session_state.setdefault("show_dashboard", True)
+st.session_state.setdefault("pending_login", None)
+st.session_state.setdefault("login_in_progress", False)
 
 MEETING_TIMEZONE_OFFSETS = {
     "US/Eastern (ET)": "-04:00",
@@ -99,6 +253,36 @@ if "token_total" not in st.session_state:
 if "limit_reached" not in st.session_state:
     st.session_state.limit_reached = False
 
+_query_token = _get_query_token()
+if not st.session_state.authenticated and _query_token:
+    session_payload = _get_session_from_token(_query_token)
+    if session_payload:
+        st.session_state.authenticated = True
+        st.session_state.user_id = session_payload["user_id"]
+        st.session_state.username = session_payload["username"]
+        st.session_state.session_token = _query_token
+    else:
+        _maybe_update_query_token(None)
+
+if st.session_state.authenticated and st.session_state.session_token:
+    _maybe_update_query_token(st.session_state.session_token)
+
+pending_login = st.session_state.get("pending_login")
+if pending_login:
+    _revoke_session_token(st.session_state.session_token)
+    user_id = pending_login.get("user_id")
+    username = pending_login.get("username")
+    st.session_state.authenticated = True
+    st.session_state.user_id = user_id
+    st.session_state.username = username
+    new_token = _issue_session_token(user_id, username)
+    st.session_state.session_token = new_token
+    _maybe_update_query_token(new_token)
+    st.session_state.show_dashboard = True
+    st.session_state.pending_login = None
+    st.session_state.login_in_progress = False
+    st.rerun()
+
 def _recompute_token_total(msgs: list[dict]) -> int:
     """Count only user+assistant tokens for the session budget."""
     return sum(
@@ -106,16 +290,6 @@ def _recompute_token_total(msgs: list[dict]) -> int:
         for m in msgs
         if m.get("role") in ("user", "assistant")
     )
-
-
-def _extract_subject_from_body(text: str) -> tuple[str | None, str]:
-    lines = text.splitlines()
-    for idx, line in enumerate(lines):
-        if line.lower().startswith("subject:"):
-            subject = line.split(":", 1)[1].strip()
-            body = "\n".join(lines[:idx] + lines[idx + 1 :]).strip()
-            return (subject or None), body
-    return None, text
 
 
 def _build_start_iso(selected_date: date, selected_time: time, tz_label: str) -> str:
@@ -167,7 +341,7 @@ def _render_tool_picker() -> None:
     st.markdown(
         """
         <div class="tool-picker-card">
-            <h4>Assisted Actions</h4>
+            <h4 class="tool-picker-title">Assisted Actions</h4>
             <p>Tap a Bulls assistant to draft outreach or schedule meetings.</p>
         </div>
         """,
@@ -213,55 +387,33 @@ def _maybe_auto_open_assistant(response_text: str | None) -> None:
         _activate_assistant("meeting")
 
 
-def _generate_email_draft(student_message: str, placeholder) -> str:
-    prompt = (
-        "You are a seasoned USF administrator crafting an official reply. Draft a professional "
-        "email response to the student inquiry below, including a greeting, concise policy-aligned "
-        "body, and courteous closing. Cite policy details using the provided context and keep the tone "
-        "service-oriented, friendly, and actionable.\n\n"
-        f"Student inquiry:\n{student_message}"
-    )
-    final_text = None
-    last_chunk = ""
-    for kind, payload in generate_with_rag(
-        prompt,
-        mcp_client=mcp_client,
-    ):
-        text = payload.get("text", "")
-        if not text:
-            continue
-        last_chunk = text
-        placeholder.write(text)
-        if kind != "delta":
-            final_text = text
-    return final_text or last_chunk
+def _draft_email_via_mcp(
+    student_message: str,
+    *,
+    subject: str | None = None,
+    instructions: str | None = None,
+    previous_draft: str | None = None,
+    placeholder=None,
+) -> dict[str, Any] | None:
+    try:
+        draft = mcp_client.draft_email(
+            student_message,
+            subject=subject,
+            instructions=instructions,
+            previous_draft=previous_draft,
+            session_id=st.session_state.current_session_id,
+        )
+    except RuntimeError as exc:
+        if placeholder is not None:
+            placeholder.error(f"Email drafting failed: {exc}")
+        else:
+            st.error(f"Email drafting failed: {exc}")
+        return None
 
-
-def _revise_email_draft(current_draft: str, student_message: str, instructions: str, placeholder) -> str:
-    prompt = (
-        "You previously drafted this USF administrative email. Update it based on the new instructions "
-        "while keeping the greeting, body, and closing polished, accurate, and citation-backed.\n\n"
-        f"Student inquiry:\n{student_message}\n\n"
-        f"Current draft:\n{current_draft}\n\n"
-        f"Edit instructions:\n{instructions}\n\n"
-        "Rewrite the full email so it remains professional, concise, and accurate."
-    )
-    final_text = None
-    last_chunk = ""
-    for kind, payload in generate_with_rag(
-        prompt,
-        mcp_client=mcp_client,
-    ):
-        text = payload.get("text", "")
-        if not text:
-            continue
-        last_chunk = text
-        placeholder.write(text)
-        if kind != "delta":
-            final_text = text
-    if final_text:
-        return final_text
-    return last_chunk or current_draft
+    body = draft.get("body", "")
+    if placeholder is not None and body:
+        placeholder.markdown(body)
+    return draft
 
 
 def _start_email_draft(to_addr: str, subject: str, student_msg: str) -> None:
@@ -276,13 +428,18 @@ def _start_email_draft(to_addr: str, subject: str, student_msg: str) -> None:
     with st.chat_message("assistant"):
         st.markdown(f"✉️ Drafting reply to **{to_addr}** ...")
         placeholder = st.empty()
-        draft = _generate_email_draft(student_msg, placeholder)
-    extracted_subject, cleaned_draft = _extract_subject_from_body(draft)
-    if extracted_subject:
-        subject = extracted_subject
+        drafted = _draft_email_via_mcp(
+            student_msg,
+            subject=subject,
+            placeholder=placeholder,
+        )
+    if not drafted:
+        return
+    cleaned_draft = drafted.get("body", "")
+    matched_chunks = drafted.get("context_hits", [])
+    subject = drafted.get("subject", subject)
+    if subject:
         st.session_state.email_subject_sync_value = subject
-    else:
-        cleaned_draft = draft
 
     out_toks = estimate_tokens(cleaned_draft)
     st.session_state.messages.append({"role": "assistant", "content": cleaned_draft})
@@ -295,7 +452,7 @@ def _start_email_draft(to_addr: str, subject: str, student_msg: str) -> None:
     mcp_client.log_interaction(
         st.session_state.current_session_id,
         "email_draft",
-        {"to": to_addr, "subject": subject, "draft": cleaned_draft},
+        {"to": to_addr, "subject": subject, "draft": cleaned_draft, "chunks": matched_chunks},
     )
     st.session_state.token_total += in_toks + out_toks
     st.session_state.pending_email = {
@@ -322,12 +479,20 @@ def _apply_email_edit(instructions: str) -> None:
     with st.chat_message("assistant"):
         st.markdown("✏️ Updating the email draft …")
         placeholder = st.empty()
-        revised = _revise_email_draft(
-            pending.get("body", ""),
+        drafted = _draft_email_via_mcp(
             pending.get("student_msg", ""),
-            instructions,
-            placeholder,
+            subject=pending.get("subject"),
+            instructions=instructions,
+            previous_draft=pending.get("body", ""),
+            placeholder=placeholder,
         )
+    if not drafted:
+        return
+    revised = drafted.get("body", pending.get("body", ""))
+    new_subject = drafted.get("subject")
+    if new_subject:
+        pending["subject"] = new_subject
+        st.session_state.email_subject_sync_value = new_subject
     out_toks = estimate_tokens(revised)
     st.session_state.messages.append({"role": "assistant", "content": revised})
     db.add_message(
@@ -339,7 +504,12 @@ def _apply_email_edit(instructions: str) -> None:
     mcp_client.log_interaction(
         st.session_state.current_session_id,
         "email_edit",
-        {"instructions": instructions, "subject": pending["subject"], "draft": revised},
+        {
+            "instructions": instructions,
+            "subject": pending["subject"],
+            "draft": revised,
+            "chunks": drafted.get("context_hits", []),
+        },
     )
     st.session_state.token_total += out_toks
     pending["body"] = revised
@@ -365,9 +535,15 @@ def _send_email_draft() -> None:
         return
     try:
         message_id = mcp_client.send_email(pending["to"], pending["subject"], pending["body"])
-    except GoogleWorkspaceError as e:
+    except (GoogleWorkspaceError, RuntimeError) as e:
+        error_text = f"Email delivery failed: {e}"
         with st.chat_message("assistant"):
-            st.error(str(e))
+            st.error(error_text)
+        mcp_client.log_interaction(
+            st.session_state.current_session_id,
+            "email_send_failed",
+            {"to": pending.get("to"), "subject": pending.get("subject"), "error": str(e)},
+        )
         return
 
     confirmation = f"Email sent to {pending['to']} (id: {message_id})."
@@ -419,35 +595,29 @@ def _plan_meeting(
 
     attendees = [email.strip() for email in attendee_raw.split(",") if email.strip()]
     try:
-        slot_free = google_tools.check_availability(start_raw, duration)
-    except GoogleWorkspaceError as e:
+        plan = mcp_client.plan_meeting(
+            summary,
+            start_raw,
+            duration,
+            attendees=attendees,
+            agenda=description,
+            location=location,
+            session_id=st.session_state.current_session_id,
+        )
+    except RuntimeError as e:
         with st.chat_message("assistant"):
             st.error(str(e))
         return
 
-    suggested = None
-    if not slot_free:
-        try:
-            suggested = google_tools.find_next_available_slot(start_raw, duration)
-        except GoogleWorkspaceError:
-            suggested = None
+    st.session_state.pending_meeting = plan
+    slot_free = plan.get("slot_free", False)
+    start_iso = plan.get("start", start_raw)
+    suggested = plan.get("suggested")
 
-    start_iso = google_tools._normalize_iso(start_raw)
-    st.session_state.pending_meeting = {
-        "summary": summary,
-        "start": start_iso,
-        "duration": duration,
-        "attendees": attendees,
-        "description": description,
-        "location": location,
-        "slot_free": slot_free,
-        "suggested": suggested,
-    }
-
-    if slot_free:
-        assistant_msg = (
-            f"The {duration}-minute slot starting {start_iso} is free. Use Create Event when ready."
-        )
+    if plan.get("ai_notes"):
+        assistant_msg = plan["ai_notes"]
+    elif slot_free:
+        assistant_msg = f"The {duration}-minute slot starting {start_iso} is free. Use Create Event when ready."
     else:
         suggestion_text = f" Suggested alternative: {suggested}" if suggested else ""
         assistant_msg = "The requested slot is busy." + suggestion_text
@@ -470,11 +640,11 @@ def _plan_meeting(
         st.session_state.current_session_id,
         "meeting_plan",
         {
-            "summary": summary,
-            "start": start_iso,
-            "duration": duration,
-            "attendees": attendees,
-            "location": location,
+            "summary": plan.get("summary", summary),
+            "start": plan.get("start", start_raw),
+            "duration": plan.get("duration", duration),
+            "attendees": plan.get("attendees", attendees),
+            "location": plan.get("location", location),
             "slot_free": slot_free,
             "suggested": suggested,
         },
@@ -535,6 +705,7 @@ def _create_meeting_event() -> None:
         "location": plan.get("location", ""),
         "event_id": event_id,
         "meeting_link": meet_link,
+        "ai_notes": plan.get("ai_notes", ""),
     }
     _queue_action_collapse("meeting", meeting_action)
     st.session_state.pending_meeting = None
@@ -659,6 +830,8 @@ def _render_meeting_builder() -> None:
             f"**Attendees:** {attendees_display}  \n"
             f"**Location:** {plan.get('location') or 'TBD'}"
         )
+        if plan.get("ai_notes"):
+            st.caption(plan["ai_notes"])
         if plan.get("suggested"):
             st.caption(f"Suggested alternative: {plan['suggested']}")
         col1, col2 = st.columns(2)
@@ -682,92 +855,98 @@ st.markdown("""
 
 # Login/Register Page
 if not st.session_state.authenticated:
-    st.markdown(
-        """
-        <style>
-        header[data-testid="stHeader"],
-        div[data-testid="stToolbar"],
-        div[data-testid="stDecoration"] {
-            display: none !important;
-            height: 0 !important;
-            padding: 0 !important;
-        }
-        [data-testid="stAppViewContainer"],
-        [data-testid="stAppViewContainer"] > .main,
-        [data-testid="stAppViewContainer"] > .main > div {
-            padding-top: 0 !important;
-            margin-top: 0 !important;
-        }
-        .block-container {
-            padding-top: 38vh !important;
-            margin-top: 0 !important;
-            padding-bottom: 0 !important;
-            margin-bottom: 0 !important;
-        }
-        .hero-fixed {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 38vh;
-            z-index: 0;
-        }
-        </style>
-        <div class="usf-hero hero-fixed">
-            <h1 class="hero-heading"><span class="emoji">🐂</span>USF Campus Concierge</h1>
-            <p>AI Assistant for Registration, Orientation, & Admissions</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    if st.session_state.login_in_progress:
+        st.info("Signing you in…")
+        st.stop()
+    login_shell = st.empty()
+    with login_shell.container():
+        st.markdown(
+            """
+            <style>
+            header[data-testid="stHeader"],
+            div[data-testid="stToolbar"],
+            div[data-testid="stDecoration"] {
+                display: none !important;
+                height: 0 !important;
+                padding: 0 !important;
+            }
+            [data-testid="stAppViewContainer"],
+            [data-testid="stAppViewContainer"] > .main,
+            [data-testid="stAppViewContainer"] > .main > div {
+                padding-top: 0 !important;
+                margin-top: 0 !important;
+            }
+            .block-container {
+                padding-top: 32vh !important;
+                margin-top: 0 !important;
+                padding-bottom: 0 !important;
+                margin-bottom: 0 !important;
+            }
+            .hero-fixed {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 35vh;
+                z-index: 0;
+            }
+            </style>
+            <div class="usf-hero hero-fixed">
+                <h1 class="hero-heading"><span class="emoji">🐂</span>USF Campus Concierge</h1>
+                <p>AI Assistant for Registration, Orientation, & Admissions</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        col1, col2, col3 = st.columns([1, 2, 1])
 
-    col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            tab1, tab2 = st.tabs(["Login", "Register"])
 
-    with col2:
-        tab1, tab2 = st.tabs(["Login", "Register"])
+            with tab1:
+                with st.form("login_form"):
+                    st.subheader("Welcome Back!")
+                    login_username = st.text_input("Username", key="login_username").strip()
+                    login_password = st.text_input("Password", type="password", key="login_password")
+                    submit = st.form_submit_button("Login", use_container_width=True, type="primary")
 
-        with tab1:
-            with st.form("login_form"):
-                st.subheader("Welcome Back!")
-                login_username = st.text_input("Username", key="login_username").strip()
-                login_password = st.text_input("Password", type="password", key="login_password")
-                submit = st.form_submit_button("Login", use_container_width=True, type="primary")
-
-                if submit:
-                    success, user_id = auth.authenticate_user(login_username, login_password)
-
-                    if success:
-                        st.session_state.authenticated = True
-                        st.session_state.user_id = user_id
-                        st.session_state.username = login_username
-                        st.success("Login successful!")
-                        st.rerun()
-                    else:
-                        st.error("Invalid username or password")
-
-        with tab2:
-            with st.form("register_form"):
-                st.subheader("Create Account")
-                reg_username = st.text_input("Username", key="reg_username").strip()
-                reg_email    = st.text_input("Email (optional)", key="reg_email").strip()
-                reg_password = st.text_input("Password", type="password", key="reg_password")
-                reg_password2 = st.text_input("Confirm Password", type="password")
-                submit = st.form_submit_button("Create Account", use_container_width=True, type="primary")
-
-                if submit:
-                    if not reg_username or not reg_password:
-                        st.error("Username and password are required")
-                    elif reg_password != reg_password2:
-                        st.error("Passwords don't match")
-                    elif len(reg_password) < 6:
-                        st.error("Password must be at least 6 characters")
-                    else:
-                        success, message = auth.create_user(reg_username, reg_password, reg_email)
+                    if submit:
+                        success, user_id = auth.authenticate_user(login_username, login_password)
 
                         if success:
-                            st.success("Account created! Please login.")
+                            st.session_state.pending_login = {
+                                "user_id": user_id,
+                                "username": login_username,
+                            }
+                            st.session_state.login_in_progress = True
+                            login_shell.empty()
+                            st.rerun()
                         else:
-                            st.error(f"Registration failed: {message}")
+                            st.error("Invalid username or password")
+
+            with tab2:
+                with st.form("register_form"):
+                    st.subheader("Create Account")
+                    reg_username = st.text_input("Username", key="reg_username").strip()
+                    reg_email    = st.text_input("Email (optional)", key="reg_email").strip()
+                    reg_password = st.text_input("Password", type="password", key="reg_password")
+                    reg_password2 = st.text_input("Confirm Password", type="password")
+                    submit = st.form_submit_button("Create Account", use_container_width=True, type="primary")
+
+                    if submit:
+                        if not reg_username or not reg_password:
+                            st.error("Username and password are required")
+                        elif reg_password != reg_password2:
+                            st.error("Passwords don't match")
+                        elif len(reg_password) < 6:
+                            st.error("Password must be at least 6 characters")
+                        else:
+                            success, message = auth.create_user(reg_username, reg_password, reg_email)
+
+                            if success:
+                                st.success("Account created! Please login.")
+                            else:
+                                st.error(f"Registration failed: {message}")
 
     st.stop()
 
@@ -778,6 +957,9 @@ else:
         st.markdown(f"### 👤 {st.session_state.username}")
 
         if st.button("🚪 Logout", use_container_width=True):
+            _revoke_session_token(st.session_state.session_token)
+            st.session_state.session_token = None
+            _maybe_update_query_token(None)
             st.session_state.authenticated = False
             st.session_state.user_id = None
             st.session_state.username = None
@@ -785,6 +967,12 @@ else:
             st.session_state.messages = []
             st.session_state.token_total = 0
             st.session_state.limit_reached = False
+            st.session_state.show_dashboard = True
+            st.rerun()
+
+        if st.button("🏠 Dashboard", use_container_width=True):
+            st.session_state.current_session_id = None
+            st.session_state.show_dashboard = True
             st.rerun()
 
         # New Session with exercise 2
@@ -802,6 +990,7 @@ else:
                 ]
                 st.session_state.token_total = 0
                 st.session_state.limit_reached = False
+                st.session_state.show_dashboard = False
                 st.rerun()
 
         # Search
@@ -929,48 +1118,17 @@ else:
                 with st.chat_message("assistant"):
                     _render_meeting_builder()
 
-            if st.session_state.recent_actions:
-                with st.chat_message("assistant"):
-                    st.markdown("<div class='recent-actions-card'>", unsafe_allow_html=True)
-                    st.markdown("#### Recent Assisted Actions")
-                    for idx, action in enumerate(st.session_state.recent_actions):
-                        data = action.get("data", {})
-                        label = (
-                            f"Email to {data.get('to', '(unknown)')}"
-                            if action.get("type") == "email"
-                            else f"Meeting: {data.get('summary', 'Untitled')}"
-                        )
-                        with st.expander(f"{label} • {action.get('timestamp')}", expanded=False):
-                            if action.get("type") == "email":
-                                st.write(f"**Subject:** {data.get('subject', '(no subject)')}")
-                                st.write(f"**Message ID:** {data.get('message_id', 'pending')}")
-                                st.text_area(
-                                    "Email Body",
-                                    data.get("body", ""),
-                                    height=150,
-                                    disabled=True,
-                                    key=f"email_log_{idx}",
-                                )
-                            else:
-                                attendees = ", ".join(data.get("attendees", [])) or "None provided"
-                                st.write(f"**When:** {data.get('start')} ({data.get('duration')} min)")
-                                st.write(f"**Attendees:** {attendees}")
-                                st.write(f"**Location:** {data.get('location') or 'TBD'}")
-                                st.write(f"**Event ID:** {data.get('event_id', 'pending')}")
-                                st.write(f"**Calendar Summary:** {data.get('summary', 'Meeting')}")
-                                if data.get("meeting_link"):
-                                    st.write(f"**Meet Link:** {data.get('meeting_link')}")
                     st.caption("Recent actions collapse automatically after you return to the chat.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
         tool_button_label = "＋" if not st.session_state.show_tool_picker else "×"
         user_input = None
-        toggle_col, input_col = st.columns([0.08, 0.92])
+        toggle_col, input_col = st.columns([0.03, 0.97], gap= None)
         with toggle_col:
             if st.button(
                 tool_button_label,
                 key="chat_tool_toggle",
-                help="Open Bulls assistants",
+                help="Open Bulls assistants" if not st.session_state.show_tool_picker else "Close Bulls assistants",
                 use_container_width=True,
             ):
                 st.session_state.show_tool_picker = not st.session_state.show_tool_picker
@@ -985,43 +1143,45 @@ else:
             else:
                 user_input = st.chat_input("Ask the USF Campus Concierge...")
 
-        if st.session_state.pending_regen and st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-            st.session_state.pending_regen = False
-            last_user = st.session_state.messages[-1]["content"]
-            with chat_col:
-                with st.chat_message("assistant"):
-                    stream_block = st.empty()
-                    final_text = None
-                    matched_chunks = []
-                    last_chunk = ""
-                    for kind, payload in generate_with_rag(last_user, mcp_client=mcp_client):
-                        text = payload.get("text", "")
-                        if not text:
-                            continue
-                        last_chunk = text
-                        stream_block.write(text)
-                        if kind != "delta":
-                            final_text = text
-                            matched_chunks = payload.get("hits", [])
-            if final_text is None:
-                final_text = last_chunk
-            out_toks = estimate_tokens(final_text or "")
-            st.session_state.token_total += out_toks
-            st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-            st.session_state.messages.append({"role": "assistant", "content": final_text})
-            db.add_message(
-                st.session_state.current_session_id,
-                "assistant",
-                final_text,
-                tokens_out=out_toks,
-            )
-            mcp_client.log_interaction(
-                st.session_state.current_session_id,
-                "assistant_regen",
-                {"query": last_user, "response": final_text, "chunks": matched_chunks},
-            )
-            _maybe_auto_open_assistant(final_text)
-            st.rerun()
+            if st.session_state.pending_regen and st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+                st.session_state.pending_regen = False
+                last_user = st.session_state.messages[-1]["content"]
+                with chat_col:
+                    with st.chat_message("assistant"):
+                        stream_block = st.empty()
+                        streamer = SmoothStreamer(stream_block)
+                        final_text = None
+                        matched_chunks = []
+                        last_chunk = ""
+                        for kind, payload in generate_with_rag(last_user, mcp_client=mcp_client):
+                            text = payload.get("text", "")
+                            if not text:
+                                continue
+                            last_chunk = text
+                            streamer.update(text)
+                            if kind != "delta":
+                                final_text = text
+                                matched_chunks = payload.get("hits", [])
+                        streamer.finalize(final_text or last_chunk)
+                if final_text is None:
+                    final_text = last_chunk
+                out_toks = estimate_tokens(final_text or "")
+                st.session_state.token_total += out_toks
+                st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                st.session_state.messages.append({"role": "assistant", "content": final_text})
+                db.add_message(
+                    st.session_state.current_session_id,
+                    "assistant",
+                    final_text,
+                    tokens_out=out_toks,
+                )
+                mcp_client.log_interaction(
+                    st.session_state.current_session_id,
+                    "assistant_regen",
+                    {"query": last_user, "response": final_text, "chunks": matched_chunks},
+                )
+                _maybe_auto_open_assistant(final_text)
+                st.rerun()
 
         if user_input:
             _handle_pending_action_collapses()
@@ -1064,6 +1224,7 @@ else:
             with chat_col:
                 with st.chat_message("assistant"):
                     stream_block = st.empty()
+                    streamer = SmoothStreamer(stream_block)
                     final_text = None
                     matched_chunks = []
                     last_chunk = ""
@@ -1072,10 +1233,11 @@ else:
                         if not text:
                             continue
                         last_chunk = text
-                        stream_block.write(text)
+                        streamer.update(text)
                         if kind != "delta":
                             final_text = text
                             matched_chunks = payload.get("hits", [])
+                    streamer.finalize(final_text or last_chunk)
             if final_text is None:
                 final_text = last_chunk
             if final_text is None:
@@ -1125,6 +1287,8 @@ else:
 
         st.divider()
 
+        _handle_pending_action_collapses()
+
         # Stats
         sessions = db.get_user_sessions(st.session_state.user_id)
 
@@ -1140,29 +1304,70 @@ else:
         st.divider()
 
         # Recent sessions
-        if sessions:
+        if st.session_state.show_dashboard:
             st.subheader("📌 Recent Sessions")
 
-            for session in sessions[:5]:
-                session_id = session.get("id")
-                with st.expander(f"💬 {session['session_name']}", expanded=False):
+            if sessions:
+                for session in sessions[:5]:
+                    session_id = session.get("id")
                     messages = db.get_session_messages(session_id)
+                    msg_count = len(messages)
+                    created_label = _format_est_timestamp(session.get("created_at"))
+                    updated_label = _format_est_timestamp(session.get("updated_at"))
+                    header = f"💬 {session['session_name']}"
+                    with st.expander(header, expanded=False):
+                        st.markdown(
+                            f"**Created:** {created_label}  \n"
+                            f"**Updated:** {updated_label}  \n"
+                            f"**Messages:** {msg_count}"
+                        )
 
-                    st.caption(f"Created: {session['created_at']}")
-                    st.caption(f"Updated: {session['updated_at']}")
-                    st.caption(f"Messages: {len(messages)}")
+                        if st.button("Open", key=f"open_{session_id}"):
+                            st.session_state.current_session_id = session_id
+                            st.session_state.messages = [
+                                {"role": "system", "content": "Assistant configured."}
+                            ] + [
+                                {"role": msg["role"], "content": msg["content"]}
+                                for msg in messages
+                            ]
+                            st.session_state.token_total = _recompute_token_total(st.session_state.messages)
+                            st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                            st.session_state.show_dashboard = False
+                            st.rerun()
+            else:
+                st.info("👈 Create your first session to start chatting!")
 
-                    if st.button("Open", key=f"open_{session_id}"):
-                        st.session_state.current_session_id = session_id
-                        st.session_state.messages = [
-                            {"role": "system", "content": "Assistant configured."}
-                        ] + [
-                            {"role": msg["role"], "content": msg["content"]}
-                            for msg in messages
-                        ]
-                        st.session_state.token_total = _recompute_token_total(st.session_state.messages)
-                        st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-                        st.rerun()
-
+            if st.session_state.recent_actions:
+                st.subheader("📝 Recent Assisted Actions")
+                for idx, action in enumerate(st.session_state.recent_actions):
+                    data = action.get("data", {})
+                    timestamp_label = _format_est_timestamp(action.get("timestamp"))
+                    if action.get("type") == "email":
+                        label = f"Email to {data.get('to', '(unknown)')} • {timestamp_label}"
+                    else:
+                        label = f"Meeting: {data.get('summary', 'Untitled')} • {timestamp_label}"
+                    with st.expander(label, expanded=False):
+                        if action.get("type") == "email":
+                            st.write(f"**Subject:** {data.get('subject', '(no subject)')}")
+                            st.write(f"**Message ID:** {data.get('message_id', 'pending')}")
+                            st.text_area(
+                                "Email Body",
+                                data.get("body") or "",
+                                height=150,
+                                disabled=True,
+                                key=f"email_log_dash_{idx}",
+                            )
+                        else:
+                            attendees = ", ".join(data.get("attendees", [])) or "None provided"
+                            duration_display = f"{data.get('duration')} min" if data.get("duration") else "N/A"
+                            st.write(f"**When:** {_format_est_timestamp(data.get('start'))} ({duration_display})")
+                            st.write(f"**Attendees:** {attendees}")
+                            st.write(f"**Location:** {data.get('location') or 'TBD'}")
+                            st.write(f"**Event ID:** {data.get('event_id', 'pending')}")
+                            st.write(f"**Calendar Summary:** {data.get('summary', 'Meeting')}")
+                            if data.get("ai_notes"):
+                                st.caption(data["ai_notes"])
+                            if data.get("meeting_link"):
+                                st.write(f"**Meet Link:** {data.get('meeting_link')}")
         else:
-            st.info("👈 Create your first session to start chatting!")
+            st.info("Use the sidebar to return to your dashboard and see recent sessions/actions.")

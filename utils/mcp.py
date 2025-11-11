@@ -12,9 +12,12 @@ try:
 except ImportError:  
     anyio = None  
 
+from dotenv import load_dotenv
+
 from utils.database import ChatDatabase
 from utils.google_tools import GoogleWorkspaceTools
-from utils.rag import retrieve_matches
+from utils.rag import retrieve_matches, format_context, build_sources_block
+from utils.azure_llm import complete_chat
 
 try: 
     import mcp.types as mcp_types
@@ -38,11 +41,26 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["SimpleMCPClient", "build_mcp_server", "run_mcp_server"]
 
+load_dotenv()
+
 _PYTHON_BIN = sys.executable or "python3"
 SERVER_NAME = "usf_workspace_tools"
 SERVER_VERSION = "1.0.0"
 DEFAULT_SERVER_CMD = [_PYTHON_BIN, "-m", "utils.mcp", "serve"]
 DEFAULT_SERVER_CWD = Path(__file__).resolve().parents[1]
+
+PHI4_EMAIL_DEPLOYMENT = os.getenv("AZURE_PHI4_EMAIL") or os.getenv("AZURE_PHI4_ORCHESTRATOR") or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+PHI4_MEETING_DEPLOYMENT = os.getenv("AZURE_PHI4_MEETING") or os.getenv("AZURE_PHI4_ORCHESTRATOR") or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+
+def _require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+
+EMAIL_SYSTEM_PROMPT = _require_env("EMAIL_SYSTEM_PROMPT")
+MEETING_SYSTEM_PROMPT = _require_env("MEETING_SYSTEM_PROMPT")
 
 class _ToolRuntime:
     def __init__(
@@ -112,6 +130,130 @@ class _ToolRuntime:
             description=description,
             location=location,
         )
+
+    def draft_email(
+        self,
+        student_message: str,
+        subject: Optional[str] = None,
+        instructions: Optional[str] = None,
+        previous_draft: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        if not student_message:
+            raise ValueError("student_message is required")
+        hits = retrieve_matches(student_message, match_count=6)
+        context_block = format_context(hits)
+        subject_line = (subject or "USF Follow-up").strip()
+        user_sections = [f"Student inquiry:\n{student_message.strip()}\n", f"Subject reference: {subject_line}"]
+        if previous_draft:
+            user_sections.append(f"Existing draft to refine:\n{previous_draft.strip()}\n")
+        if instructions:
+            user_sections.append(f"Revision instructions:\n{instructions.strip()}\n")
+        user_sections.append(f"Context:\n{context_block}")
+        messages = [
+            {"role": "system", "content": EMAIL_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n\n".join(user_sections)},
+        ]
+        body = complete_chat(
+            PHI4_EMAIL_DEPLOYMENT,
+            messages,
+            temperature=0.25,
+            deployment_name="AZURE_PHI4_EMAIL",
+        ).strip()
+        sources = build_sources_block(hits)
+        if sources and "**Sources**" not in body:
+            body = f"{body}\n\n**Sources**\n{sources}"
+        draft = {
+            "subject": subject_line,
+            "body": body,
+            "sources": sources,
+            "context_hits": hits,
+        }
+        if session_id:
+            self.db.log_event(
+                session_id,
+                "email_model_draft",
+                {
+                    "subject": subject_line,
+                    "instructions": instructions or "",
+                    "had_previous": bool(previous_draft),
+                },
+            )
+        return draft
+
+    def plan_meeting(
+        self,
+        summary: str,
+        start_iso: str,
+        duration_minutes: int,
+        attendees: Optional[list[str]] = None,
+        agenda: str = "",
+        location: str = "",
+        session_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        if not start_iso:
+            raise ValueError("start_iso is required")
+        duration = max(5, int(duration_minutes or 30))
+        normalized_start = self.google._normalize_iso(start_iso)
+        attendees = attendees or []
+        slot_free = self.google.check_availability(normalized_start, duration)
+        suggested = None
+        if not slot_free:
+            try:
+                suggested = self.google.find_next_available_slot(normalized_start, duration)
+            except Exception:
+                suggested = None
+        agenda_clean = (agenda or "").strip()
+        summary_clean = (summary or "Student Meeting").strip()
+        location_clean = (location or "").strip()
+        attendee_line = ", ".join(attendees) if attendees else "None provided"
+        availability_line = "open" if slot_free else "busy"
+        user_prompt = (
+            f"Meeting summary: {summary_clean}\n"
+            f"Requested start: {normalized_start}\n"
+            f"Duration: {duration} minutes\n"
+            f"Attendees: {attendee_line}\n"
+            f"Availability status: {availability_line}\n"
+        )
+        if suggested:
+            user_prompt += f"Suggested alternative slot: {suggested}\n"
+        if agenda_clean:
+            user_prompt += f"Agenda / notes:\n{agenda_clean}\n"
+        if location_clean:
+            user_prompt += f"Preferred location: {location_clean}\n"
+        messages = [
+            {"role": "system", "content": MEETING_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        ai_notes = complete_chat(
+            PHI4_MEETING_DEPLOYMENT,
+            messages,
+            temperature=0.2,
+            deployment_name="AZURE_PHI4_MEETING",
+        ).strip()
+        plan = {
+            "summary": summary_clean,
+            "start": normalized_start,
+            "duration": duration,
+            "attendees": attendees,
+            "location": location_clean,
+            "slot_free": slot_free,
+            "suggested": suggested,
+            "ai_notes": ai_notes,
+            "description": ai_notes,
+        }
+        if session_id:
+            self.db.log_event(
+                session_id,
+                "meeting_model_plan",
+                {
+                    "summary": summary_clean,
+                    "start": normalized_start,
+                    "slot_free": slot_free,
+                    "suggested": suggested,
+                },
+            )
+        return plan
 
 def _tool_definitions() -> list[mcp_types.Tool]:
     """Return the MCP tool catalog."""
@@ -264,6 +406,54 @@ def _tool_definitions() -> list[mcp_types.Tool]:
             },
             annotations=annotations_mutating,
         ),
+        mcp_types.Tool(
+            name="draft_email",
+            description="Generate or revise a USF policy-aligned email using Phi-4.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "student_message": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "instructions": {"type": "string"},
+                    "previous_draft": {"type": "string"},
+                    "session_id": {"type": "string"},
+                },
+                "required": ["student_message"],
+            },
+            outputSchema={
+                "type": "object",
+                "properties": {
+                    "draft": {"type": "object"},
+                },
+                "required": ["draft"],
+            },
+            annotations=annotations_mutating,
+        ),
+        mcp_types.Tool(
+            name="plan_meeting",
+            description="Check availability, summarize details, and prepare a meeting plan via Phi-4.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "start_iso": {"type": "string"},
+                    "duration_minutes": {"type": "integer", "minimum": 5, "maximum": 480, "default": 30},
+                    "attendees": {"type": "array", "items": {"type": "string"}, "default": []},
+                    "agenda": {"type": "string"},
+                    "location": {"type": "string"},
+                    "session_id": {"type": "string"},
+                },
+                "required": ["summary", "start_iso", "duration_minutes"],
+            },
+            outputSchema={
+                "type": "object",
+                "properties": {
+                    "plan": {"type": "object"},
+                },
+                "required": ["plan"],
+            },
+            annotations=annotations_mutating,
+        ),
     ]
 
 def build_mcp_server(runtime: Optional[_ToolRuntime] = None) -> Server:
@@ -341,6 +531,30 @@ async def _execute_tool(runtime: _ToolRuntime, tool_name: str, args: dict[str, A
             args.get("body", ""),
         )
         return {"message_id": message_id}
+
+    if tool_name == "draft_email":
+        draft = await _run_blocking(
+            runtime.draft_email,
+            args.get("student_message", ""),
+            args.get("subject"),
+            args.get("instructions"),
+            args.get("previous_draft"),
+            args.get("session_id"),
+        )
+        return {"draft": draft}
+
+    if tool_name == "plan_meeting":
+        plan = await _run_blocking(
+            runtime.plan_meeting,
+            args.get("summary", ""),
+            args.get("start_iso", ""),
+            int(args.get("duration_minutes", 30)),
+            args.get("attendees"),
+            args.get("agenda", ""),
+            args.get("location", ""),
+            args.get("session_id"),
+        )
+        return {"plan": plan}
 
     if tool_name == "create_event":
         event_info = await _run_blocking(
@@ -485,6 +699,27 @@ class SimpleMCPClient:
         )
         return self._structured(result, "message_id", "")
 
+    def draft_email(
+        self,
+        student_message: str,
+        *,
+        subject: str | None = None,
+        instructions: str | None = None,
+        previous_draft: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload = {"student_message": student_message}
+        if subject is not None:
+            payload["subject"] = subject
+        if instructions is not None:
+            payload["instructions"] = instructions
+        if previous_draft is not None:
+            payload["previous_draft"] = previous_draft
+        if session_id:
+            payload["session_id"] = session_id
+        result = self._call_tool("draft_email", payload)
+        return self._structured(result, "draft", {})
+
     def create_event(
         self,
         summary: str,
@@ -518,6 +753,29 @@ class SimpleMCPClient:
                 description=description,
                 location=location,
             )
+
+    def plan_meeting(
+        self,
+        summary: str,
+        start_iso: str,
+        duration_minutes: int,
+        attendees: Optional[list[str]] = None,
+        agenda: str = "",
+        location: str = "",
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "summary": summary,
+            "start_iso": start_iso,
+            "duration_minutes": duration_minutes,
+            "attendees": attendees or [],
+            "agenda": agenda,
+            "location": location,
+        }
+        if session_id:
+            payload["session_id"] = session_id
+        result = self._call_tool("plan_meeting", payload)
+        return self._structured(result, "plan", {})
 
 def _extract_error(result: mcp_types.CallToolResult) -> str:
     for block in result.content:
