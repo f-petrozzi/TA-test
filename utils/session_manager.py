@@ -1,74 +1,148 @@
-"""Device-specific session management without cross-device persistence."""
+"""Browser-specific authentication using localStorage and session state."""
 import secrets
 import streamlit as st
+import streamlit.components.v1 as components
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
+import json
+
+
+def get_browser_id() -> Optional[str]:
+    """
+    Get a unique browser ID from localStorage.
+    Returns None if not set (first visit or new browser).
+    """
+    # JavaScript to get browser ID from localStorage
+    result = components.html(
+        """
+        <script>
+        let browserId = localStorage.getItem('usf_browser_id');
+        if (!browserId) {
+            // Generate new browser ID
+            browserId = 'browser_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+            localStorage.setItem('usf_browser_id', browserId);
+        }
+        // Send browser ID back to Streamlit
+        window.parent.postMessage({type: 'streamlit:setComponentValue', value: browserId}, '*');
+        </script>
+        """,
+        height=0,
+    )
+    return result
+
+
+def clear_browser_session() -> None:
+    """Clear the browser's session data."""
+    components.html(
+        """
+        <script>
+        localStorage.removeItem('usf_browser_id');
+        localStorage.removeItem('usf_session_token');
+        </script>
+        """,
+        height=0,
+    )
 
 
 def _ensure_session_init() -> None:
-    """Initialize session state for token storage if not exists."""
-    if "session_token_map" not in st.session_state:
-        st.session_state.session_token_map = {}
+    """Initialize session state for authentication if not exists."""
+    if "auth_sessions" not in st.session_state:
+        # Map of browser_id -> session data
+        st.session_state.auth_sessions = {}
+    if "current_browser_id" not in st.session_state:
+        st.session_state.current_browser_id = None
 
 
-def issue_session_token(user_id: str, username: str) -> str:
+def issue_session_token(user_id: str, username: str, browser_id: str) -> str:
     """
-    Issue a new session token for a user.
-    Token is stored in session state (device-specific, survives page refresh via query param).
+    Issue a new session token for a user on a specific browser.
+
+    Args:
+        user_id: User's database ID
+        username: User's username
+        browser_id: Browser-specific identifier from localStorage
+
+    Returns:
+        Session token
     """
     _ensure_session_init()
+
+    # Generate token
     token = secrets.token_urlsafe(32)
-    st.session_state.session_token_map[token] = {
+
+    # Store session data keyed by browser_id
+    st.session_state.auth_sessions[browser_id] = {
+        "token": token,
         "user_id": user_id,
         "username": username,
         "issued_at": datetime.utcnow().isoformat(timespec="seconds"),
     }
+
+    # Store current browser ID
+    st.session_state.current_browser_id = browser_id
+
+    # Send token to browser's localStorage
+    components.html(
+        f"""
+        <script>
+        localStorage.setItem('usf_session_token', '{token}');
+        </script>
+        """,
+        height=0,
+    )
+
     return token
 
 
-def revoke_session_token(token: str | None) -> None:
-    """Revoke a session token (remove from session state)."""
-    if not token:
-        return
-    _ensure_session_init()
-    st.session_state.session_token_map.pop(token, None)
-
-
-def get_session_from_token(token: str | None) -> dict[str, Any] | None:
+def get_session_from_browser(browser_id: str, browser_token: Optional[str]) -> dict[str, Any] | None:
     """
-    Retrieve session data from a token.
-    Only works for tokens in the current browser session (not shared across devices).
+    Retrieve session data for a specific browser.
+
+    Args:
+        browser_id: Browser-specific identifier
+        browser_token: Token stored in browser's localStorage
+
+    Returns:
+        Session data if valid, None otherwise
     """
-    if not token:
-        return None
     _ensure_session_init()
-    return st.session_state.session_token_map.get(token)
 
-
-def get_query_token() -> str | None:
-    """Extract session token from URL query parameters."""
-    params = st.query_params
-    token_value = params.get("session_token")
-    if token_value is None:
+    if not browser_id or not browser_token:
         return None
-    if isinstance(token_value, list):
-        return token_value[0]
-    return token_value
+
+    # Get session for this browser
+    session = st.session_state.auth_sessions.get(browser_id)
+
+    if not session:
+        return None
+
+    # Verify token matches
+    if session.get("token") != browser_token:
+        return None
+
+    return session
 
 
-def update_query_token(token: str | None) -> None:
-    """Update the session token in URL query parameters."""
-    normalized: dict[str, Any] = {}
-    for key, value in st.query_params.items():
-        normalized[key] = value if not isinstance(value, list) or len(value) > 1 else value[0]
+def revoke_session(browser_id: str) -> None:
+    """Revoke session for a specific browser."""
+    _ensure_session_init()
 
-    if token:
-        if normalized.get("session_token") == token:
-            return
-        normalized["session_token"] = token
-    else:
-        if "session_token" not in normalized:
-            return
-        normalized.pop("session_token", None)
+    if browser_id:
+        st.session_state.auth_sessions.pop(browser_id, None)
 
-    st.query_params = normalized
+    # Clear browser storage
+    clear_browser_session()
+
+
+def get_browser_token() -> Optional[str]:
+    """Get the session token from browser's localStorage."""
+    result = components.html(
+        """
+        <script>
+        const token = localStorage.getItem('usf_session_token');
+        window.parent.postMessage({type: 'streamlit:setComponentValue', value: token}, '*');
+        </script>
+        """,
+        height=0,
+    )
+    return result
