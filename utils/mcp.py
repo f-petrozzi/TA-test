@@ -702,14 +702,15 @@ class SimpleMCPClient:
         return self._structured(result, "hits", [])
 
     def log_interaction(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
-        """Log interaction via MCP log_interaction tool."""
+        """
+        Log interaction directly to database (bypasses MCP for performance).
+        Logging is a side-effect, not a tool, so direct DB access is appropriate.
+        """
         if not session_id or not event_type:
             return
         try:
-            self._call_tool(
-                "log_interaction",
-                {"session_id": session_id, "event_type": event_type, "payload": payload},
-            )
+            # Direct database call - no MCP subprocess needed for simple logging
+            self._runtime.log_interaction(session_id, event_type, payload)
         except Exception as exc:
             logger.warning("log_interaction failed: %s", exc)
 
