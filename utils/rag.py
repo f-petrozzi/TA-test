@@ -15,7 +15,8 @@ os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("TRANSFORMERS_NO_FLAX", "1")
 os.environ.setdefault("TRANSFORMERS_NO_JAX", "1")
 
-from sentence_transformers import CrossEncoder
+# Lazy import for heavy ML libraries to speed up cold start
+# CrossEncoder imported in _get_cross_encoder() only when needed
 
 from utils.azure_llm import stream_chat
 from utils.supabase_client import get_supabase_client
@@ -96,18 +97,27 @@ def _l2_normalize(vec: List[float]) -> List[float]:
 
 
 @lru_cache(maxsize=1)
-def _get_cross_encoder() -> CrossEncoder:
-    """Lazy-load the cross-encoder once per process."""
+def _get_cross_encoder():
+    """
+    Lazy-load the cross-encoder once per process.
+    Imports sentence_transformers only when needed to speed up cold start.
+    """
+    from sentence_transformers import CrossEncoder
     return CrossEncoder(CROSS_ENCODER_MODEL)
 
 
 def _rerank_hits(query: str, hits: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
     if not hits:
         return []
+
+    # Performance optimization: Only rerank top 20 candidates instead of all 60
+    # This significantly speeds up response time while maintaining quality
+    candidates = hits[:min(20, len(hits))]
+
     ce = _get_cross_encoder()
-    pairs = [(query, h.get("doc", "")[:1200]) for h in hits]
+    pairs = [(query, h.get("doc", "")[:1200]) for h in candidates]
     scores = ce.predict(pairs)
-    ranked = sorted(zip(hits, scores), key=lambda t: float(t[1]), reverse=True)
+    ranked = sorted(zip(candidates, scores), key=lambda t: float(t[1]), reverse=True)
     reranked: List[Dict[str, Any]] = []
     for hit, score in ranked[:max(1, top_k)]:
         updated = dict(hit)

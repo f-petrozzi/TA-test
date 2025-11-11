@@ -26,8 +26,7 @@ from utils.google_tools import GoogleWorkspaceTools
 from utils.streaming import SmoothStreamer
 from utils.ui_helpers import inject_global_styles, scroll_chat_to_bottom
 from utils.session_manager import (
-    get_browser_id,
-    get_browser_token,
+    get_browser_credentials,
     issue_session_token,
     get_session_from_browser,
     revoke_session,
@@ -83,9 +82,8 @@ def recompute_token_total(msgs: list[dict]) -> int:
 
 
 # Handle browser-based authentication
-# Get browser ID and token from localStorage
-browser_id = get_browser_id()
-browser_token = get_browser_token() if browser_id else None
+# Get browser ID and token from localStorage (via query params set by JavaScript)
+browser_id, browser_token = get_browser_credentials()
 
 # Try to restore session from browser
 if not st.session_state.authenticated and browser_id and browser_token:
@@ -613,7 +611,8 @@ else:
             st.metric("📁 Total Sessions", len(sessions))
 
         with col2:
-            total_messages = sum(len(db.get_session_messages(s["id"])) for s in sessions)
+            # Optimized: Single query instead of N queries
+            total_messages = db.get_total_message_count(st.session_state.user_id)
             st.metric("💬 Total Messages", total_messages)
 
         st.divider()

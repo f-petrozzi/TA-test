@@ -1,70 +1,82 @@
-"""Browser-specific authentication using localStorage and session state."""
-import secrets
+"""Browser-specific authentication using localStorage with proper async handling."""
 import streamlit as st
-import streamlit.components.v1 as components
-from datetime import datetime
 from typing import Any, Optional
-import json
 
 
-def get_browser_id() -> Optional[str]:
+def _inject_auth_script() -> None:
     """
-    Get a unique browser ID from localStorage.
-    Returns None if not set (first visit or new browser).
+    Inject JavaScript to handle browser ID and session token.
+    This runs once and stores values in Streamlit session state.
     """
-    # JavaScript to get browser ID from localStorage
-    result = components.html(
+    # Skip if already initialized
+    if "browser_auth_initialized" in st.session_state:
+        return
+
+    # JavaScript to get/set browser ID and token
+    st.markdown(
         """
         <script>
-        let browserId = localStorage.getItem('usf_browser_id');
-        if (!browserId) {
-            // Generate new browser ID
-            browserId = 'browser_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
-            localStorage.setItem('usf_browser_id', browserId);
-        }
-        // Send browser ID back to Streamlit
-        window.parent.postMessage({type: 'streamlit:setComponentValue', value: browserId}, '*');
+        (function() {
+            // Get or create browser ID
+            let browserId = localStorage.getItem('usf_browser_id');
+            if (!browserId) {
+                browserId = 'browser_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+                localStorage.setItem('usf_browser_id', browserId);
+            }
+
+            // Get session token
+            const sessionToken = localStorage.getItem('usf_session_token') || '';
+
+            // Store in Streamlit via query params (temporary bridge)
+            const url = new URL(window.location);
+            url.searchParams.set('_bid', browserId);
+            if (sessionToken) {
+                url.searchParams.set('_token', sessionToken);
+            }
+
+            // Update URL without reload
+            if (window.location.search !== url.search) {
+                window.history.replaceState({}, '', url);
+            }
+        })();
         </script>
         """,
-        height=0,
+        unsafe_allow_html=True,
     )
-    return result
 
 
-def clear_browser_session() -> None:
-    """Clear the browser's session data."""
-    components.html(
-        """
-        <script>
-        localStorage.removeItem('usf_browser_id');
-        localStorage.removeItem('usf_session_token');
-        </script>
-        """,
-        height=0,
-    )
+def get_browser_credentials() -> tuple[Optional[str], Optional[str]]:
+    """
+    Get browser ID and token from query parameters (set by JavaScript).
+    Returns (browser_id, token) or (None, None).
+    """
+    _inject_auth_script()
+
+    # Get from query params (set by JavaScript)
+    params = st.query_params
+    browser_id = params.get("_bid")
+    token = params.get("_token")
+
+    # Handle list values
+    if isinstance(browser_id, list):
+        browser_id = browser_id[0] if browser_id else None
+    if isinstance(token, list):
+        token = token[0] if token else None
+
+    return browser_id, token
 
 
 def _ensure_session_init() -> None:
     """Initialize session state for authentication if not exists."""
     if "auth_sessions" not in st.session_state:
-        # Map of browser_id -> session data
         st.session_state.auth_sessions = {}
-    if "current_browser_id" not in st.session_state:
-        st.session_state.current_browser_id = None
 
 
 def issue_session_token(user_id: str, username: str, browser_id: str) -> str:
-    """
-    Issue a new session token for a user on a specific browser.
+    """Issue a new session token for a user on a specific browser."""
+    import secrets
+    from datetime import datetime
 
-    Args:
-        user_id: User's database ID
-        username: User's username
-        browser_id: Browser-specific identifier from localStorage
-
-    Returns:
-        Session token
-    """
     _ensure_session_init()
 
     # Generate token
@@ -78,45 +90,33 @@ def issue_session_token(user_id: str, username: str, browser_id: str) -> str:
         "issued_at": datetime.utcnow().isoformat(timespec="seconds"),
     }
 
-    # Store current browser ID
-    st.session_state.current_browser_id = browser_id
-
     # Send token to browser's localStorage
-    components.html(
+    st.markdown(
         f"""
         <script>
         localStorage.setItem('usf_session_token', '{token}');
+        const url = new URL(window.location);
+        url.searchParams.set('_token', '{token}');
+        window.history.replaceState({{}}, '', url);
         </script>
         """,
-        height=0,
+        unsafe_allow_html=True,
     )
 
     return token
 
 
-def get_session_from_browser(browser_id: str, browser_token: Optional[str]) -> dict[str, Any] | None:
-    """
-    Retrieve session data for a specific browser.
-
-    Args:
-        browser_id: Browser-specific identifier
-        browser_token: Token stored in browser's localStorage
-
-    Returns:
-        Session data if valid, None otherwise
-    """
+def get_session_from_browser(browser_id: str, browser_token: str) -> dict[str, Any] | None:
+    """Retrieve session data for a specific browser."""
     _ensure_session_init()
 
     if not browser_id or not browser_token:
         return None
 
-    # Get session for this browser
     session = st.session_state.auth_sessions.get(browser_id)
-
     if not session:
         return None
 
-    # Verify token matches
     if session.get("token") != browser_token:
         return None
 
@@ -130,19 +130,16 @@ def revoke_session(browser_id: str) -> None:
     if browser_id:
         st.session_state.auth_sessions.pop(browser_id, None)
 
-    # Clear browser storage
-    clear_browser_session()
-
-
-def get_browser_token() -> Optional[str]:
-    """Get the session token from browser's localStorage."""
-    result = components.html(
+    # Clear browser storage and query params
+    st.markdown(
         """
         <script>
-        const token = localStorage.getItem('usf_session_token');
-        window.parent.postMessage({type: 'streamlit:setComponentValue', value: token}, '*');
+        localStorage.removeItem('usf_session_token');
+        const url = new URL(window.location);
+        url.searchParams.delete('_bid');
+        url.searchParams.delete('_token');
+        window.history.replaceState({}, '', url);
         </script>
         """,
-        height=0,
+        unsafe_allow_html=True,
     )
-    return result

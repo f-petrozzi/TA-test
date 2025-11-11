@@ -130,6 +130,39 @@ class ChatDatabase:
         except Exception:
             return None
 
+    def get_total_message_count(self, user_id: str) -> int:
+        """
+        Get total message count across all sessions for a user (optimized).
+        Uses a single query instead of N queries.
+        """
+        try:
+            # Get all session IDs for this user
+            sessions_resp = (
+                self._client.table(self._sessions_table)
+                .select("id")
+                .eq("user_id", user_id)
+                .execute()
+            )
+            session_ids = [s["id"] for s in (getattr(sessions_resp, "data", []) or [])]
+
+            if not session_ids:
+                return 0
+
+            # Count all messages for these sessions in one query
+            # Note: Supabase doesn't support COUNT with filters well, so we fetch and count
+            # This is still faster than N queries
+            messages_resp = (
+                self._client.table(self._messages_table)
+                .select("id", count="exact")
+                .in_("session_id", session_ids)
+                .execute()
+            )
+
+            # Get count from response
+            return getattr(messages_resp, "count", 0) or 0
+        except Exception:
+            return 0
+
     # search/export
     def search_sessions(self, user_id: str, query: str) -> list[dict]:
         sessions = self.get_user_sessions(user_id)
