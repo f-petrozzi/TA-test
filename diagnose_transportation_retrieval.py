@@ -73,6 +73,32 @@ def main():
             print("   You need to re-ingest this document.")
             continue
 
+        # Handle different embedding formats from database
+        if isinstance(embedding, str):
+            print(f"⚠️  Embedding is stored as STRING (length: {len(embedding)})")
+            print("   Attempting to parse as JSON...")
+            import json
+            try:
+                embedding = json.loads(embedding)
+            except:
+                print("   ❌ Failed to parse embedding string")
+                continue
+
+        # Flatten if nested
+        if embedding and isinstance(embedding[0], (list, tuple)):
+            embedding = embedding[0]
+
+        # Convert to floats
+        try:
+            embedding = [float(x) for x in embedding]
+        except (TypeError, ValueError) as e:
+            print(f"❌ CRITICAL: Cannot convert embedding to floats: {e}")
+            print(f"   Embedding type: {type(embedding)}")
+            if embedding:
+                print(f"   First element type: {type(embedding[0])}")
+                print(f"   First element: {embedding[0]}")
+            continue
+
         print(f"✅ Chunk has embedding (dimension: {len(embedding)})")
 
         # Step 3: Calculate direct similarity
