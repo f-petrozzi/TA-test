@@ -26,11 +26,11 @@ from utils.google_tools import GoogleWorkspaceTools
 from utils.streaming import SmoothStreamer
 from utils.ui_helpers import inject_global_styles, scroll_chat_to_bottom
 from utils.session_manager import (
+    get_browser_id,
+    get_browser_token,
     issue_session_token,
-    revoke_session_token,
-    get_session_from_token,
-    get_query_token,
-    update_query_token,
+    get_session_from_browser,
+    revoke_session,
 )
 from utils.state_manager import (
     initialize_session_state,
@@ -82,33 +82,37 @@ def recompute_token_total(msgs: list[dict]) -> int:
     )
 
 
-# Handle session token from URL
-query_token = get_query_token()
-if not st.session_state.authenticated and query_token:
-    session_payload = get_session_from_token(query_token)
+# Handle browser-based authentication
+# Get browser ID and token from localStorage
+browser_id = get_browser_id()
+browser_token = get_browser_token() if browser_id else None
+
+# Try to restore session from browser
+if not st.session_state.authenticated and browser_id and browser_token:
+    session_payload = get_session_from_browser(browser_id, browser_token)
     if session_payload:
         st.session_state.authenticated = True
         st.session_state.user_id = session_payload["user_id"]
         st.session_state.username = session_payload["username"]
-        st.session_state.session_token = query_token
-    else:
-        update_query_token(None)
+        st.session_state.current_browser_id = browser_id
 
-if st.session_state.authenticated and st.session_state.session_token:
-    update_query_token(st.session_state.session_token)
-
-# Handle pending login
+# Handle pending login (after user submits login form)
 pending_login = st.session_state.get("pending_login")
-if pending_login:
-    revoke_session_token(st.session_state.session_token)
+if pending_login and browser_id:
+    # Revoke old session if exists
+    if st.session_state.get("current_browser_id"):
+        revoke_session(st.session_state.current_browser_id)
+
+    # Issue new session token for this browser
     user_id = pending_login.get("user_id")
     username = pending_login.get("username")
+    issue_session_token(user_id, username, browser_id)
+
+    # Update session state
     st.session_state.authenticated = True
     st.session_state.user_id = user_id
     st.session_state.username = username
-    new_token = issue_session_token(user_id, username)
-    st.session_state.session_token = new_token
-    update_query_token(new_token)
+    st.session_state.current_browser_id = browser_id
     st.session_state.show_dashboard = True
     st.session_state.pending_login = None
     st.session_state.login_in_progress = False
@@ -231,12 +235,15 @@ else:
         st.markdown(f"### 👤 {st.session_state.username}")
 
         if st.button("🚪 Logout", use_container_width=True):
-            revoke_session_token(st.session_state.session_token)
-            st.session_state.session_token = None
-            update_query_token(None)
+            # Revoke browser session
+            if st.session_state.get("current_browser_id"):
+                revoke_session(st.session_state.current_browser_id)
+
+            # Clear session state
             st.session_state.authenticated = False
             st.session_state.user_id = None
             st.session_state.username = None
+            st.session_state.current_browser_id = None
             st.session_state.current_session_id = None
             st.session_state.messages = []
             st.session_state.token_total = 0
