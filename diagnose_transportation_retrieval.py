@@ -88,6 +88,13 @@ def main():
         if embedding and isinstance(embedding[0], (list, tuple)):
             embedding = embedding[0]
 
+        # Debug: Show raw embedding info before conversion
+        print(f"   Raw embedding type: {type(embedding)}")
+        print(f"   Raw embedding length: {len(embedding)}")
+        if embedding:
+            print(f"   First element type: {type(embedding[0])}")
+            print(f"   First 3 elements: {embedding[:3]}")
+
         # Convert to floats
         try:
             embedding = [float(x) for x in embedding]
@@ -100,6 +107,7 @@ def main():
             continue
 
         print(f"✅ Chunk has embedding (dimension: {len(embedding)})")
+        print(f"   First 3 values after conversion: {embedding[:3]}")
 
         # Step 3: Calculate direct similarity
         print("\nSTEP 3: Testing direct similarity with query...")
@@ -111,6 +119,13 @@ def main():
 
         emb_clean = list(embed_query(query_clean))
         emb_prefix = list(embed_query(query_with_prefix))
+
+        # Debug query embeddings
+        print(f"   Query embedding (clean) type: {type(emb_clean)}")
+        print(f"   Query embedding (clean) dimension: {len(emb_clean)}")
+        print(f"   Query embedding (clean) first 3: {emb_clean[:3]}")
+        print(f"   Chunk embedding dimension: {len(embedding)}")
+        print(f"   Chunk embedding first 3: {embedding[:3]}")
 
         sim_clean = cosine_similarity(emb_clean, embedding)
         sim_prefix = cosine_similarity(emb_prefix, embedding)
