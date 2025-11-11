@@ -26,9 +26,9 @@ from utils.google_tools import GoogleWorkspaceTools
 from utils.streaming import SmoothStreamer
 from utils.ui_helpers import inject_global_styles, scroll_chat_to_bottom
 from utils.session_manager import (
-    get_browser_credentials,
+    get_session_token,
+    get_session_from_token,
     issue_session_token,
-    get_session_from_browser,
     revoke_session,
 )
 from utils.state_manager import (
@@ -81,48 +81,32 @@ def recompute_token_total(msgs: list[dict]) -> int:
     )
 
 
-# Handle browser-based authentication
-# Get browser ID and token from localStorage (via query params set by JavaScript)
-browser_id, browser_token = get_browser_credentials()
-
-# Try to restore session from browser
-if not st.session_state.authenticated and browser_id and browser_token:
-    session_payload = get_session_from_browser(browser_id, browser_token)
-    if session_payload:
-        st.session_state.authenticated = True
-        st.session_state.user_id = session_payload["user_id"]
-        st.session_state.username = session_payload["username"]
-        st.session_state.current_browser_id = browser_id
+# Handle simple token-based authentication
+# Try to restore session from query parameter
+if not st.session_state.authenticated:
+    session_token = get_session_token()
+    if session_token:
+        session_payload = get_session_from_token(session_token)
+        if session_payload:
+            st.session_state.authenticated = True
+            st.session_state.user_id = session_payload["user_id"]
+            st.session_state.username = session_payload["username"]
 
 # Handle pending login (after user submits login form)
 pending_login = st.session_state.get("pending_login")
 if pending_login:
-    if browser_id:
-        # Browser ID is ready, complete login
-        # Revoke old session if exists
-        if st.session_state.get("current_browser_id"):
-            revoke_session(st.session_state.current_browser_id)
+    # Issue new session token
+    user_id = pending_login.get("user_id")
+    username = pending_login.get("username")
+    issue_session_token(user_id, username)
 
-        # Issue new session token for this browser
-        user_id = pending_login.get("user_id")
-        username = pending_login.get("username")
-        issue_session_token(user_id, username, browser_id)
-
-        # Update session state
-        st.session_state.authenticated = True
-        st.session_state.user_id = user_id
-        st.session_state.username = username
-        st.session_state.current_browser_id = browser_id
-        st.session_state.show_dashboard = True
-        st.session_state.pending_login = None
-        st.session_state.login_in_progress = False
-        st.rerun()
-    else:
-        # Browser ID not ready yet, wait for JavaScript to execute
-        # This prevents infinite "Signing you in..." by triggering a rerun
-        import time
-        time.sleep(0.05)  # Give JavaScript 50ms to execute
-        st.rerun()
+    # Update session state
+    st.session_state.authenticated = True
+    st.session_state.user_id = user_id
+    st.session_state.username = username
+    st.session_state.show_dashboard = True
+    st.session_state.pending_login = None
+    st.rerun()
 
 # Reduce padding at bottom
 st.markdown("""
@@ -137,10 +121,6 @@ st.markdown("""
 
 # Login/Register Page
 if not st.session_state.authenticated:
-    if st.session_state.login_in_progress:
-        st.info("Signing you in…")
-        st.stop()
-
     login_shell = st.empty()
     with login_shell.container():
         st.markdown(
@@ -202,8 +182,6 @@ if not st.session_state.authenticated:
                                 "user_id": user_id,
                                 "username": login_username,
                             }
-                            st.session_state.login_in_progress = True
-                            login_shell.empty()
                             st.rerun()
                         else:
                             st.error("Invalid username or password")
@@ -241,15 +219,13 @@ else:
         st.markdown(f"### 👤 {st.session_state.username}")
 
         if st.button("🚪 Logout", use_container_width=True):
-            # Revoke browser session
-            if st.session_state.get("current_browser_id"):
-                revoke_session(st.session_state.current_browser_id)
+            # Revoke session token
+            revoke_session()
 
             # Clear session state
             st.session_state.authenticated = False
             st.session_state.user_id = None
             st.session_state.username = None
-            st.session_state.current_browser_id = None
             st.session_state.current_session_id = None
             st.session_state.messages = []
             st.session_state.token_total = 0

@@ -73,7 +73,6 @@ def initialize_session_state() -> None:
 
     # Login flow
     st.session_state.setdefault("pending_login", None)
-    st.session_state.setdefault("login_in_progress", False)
 
 
 def activate_assistant(kind: str | None, *, rerun: bool = False) -> None:
