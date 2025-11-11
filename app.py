@@ -6,6 +6,11 @@ from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
+BASE_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = BASE_DIR / ".streamlit" / "config.toml"
+if CONFIG_PATH.exists():
+    os.environ.setdefault("STREAMLIT_CONFIG_FILE", str(CONFIG_PATH))
+
 import streamlit as st
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
@@ -24,7 +29,6 @@ SESSION_TOKEN_LIMIT = int(os.environ.get("SESSION_TOKEN_LIMIT", "1500"))  # tota
 db = ChatDatabase()
 google_tools = GoogleWorkspaceTools()
 mcp_client = SimpleMCPClient(chat_db=db, google_tools=google_tools)
-BASE_DIR = Path(__file__).resolve().parent
 UTC = ZoneInfo("UTC")
 EASTERN = ZoneInfo("America/New_York")
 

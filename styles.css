@@ -73,36 +73,6 @@ h1, h2, h3 {
   letter-spacing: 0.5px;
 }
 
-[data-testid="stHeading"] a,
-[data-testid="stHeading"] svg,
-[data-testid="stHeading"] button {
-  display: none !important;
-}
-
-h1 a,
-h2 a,
-h3 a,
-h1 svg,
-h2 svg,
-h3 svg,
-h1 button,
-h2 button,
-h3 button {
-  display: none !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-
-/* Hide Streamlit's helper captions like "Press Enter to apply" */
-[data-testid="stCaptionContainer"] {
-  display: none !important;
-}
-
-[data-testid="InputInstructions"],
-[data-testid="stCaption"] {
-  display: none !important;
-}
-
 /* Main h1 headers use a gradient text effect with soft entry animation */
 h1 {
   background: #004f3c;
@@ -247,18 +217,20 @@ h1 {
 .usf-hero {
   position: relative;
   width: 100%;
-  height: 20vh;
+  height: 30vh;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
   overflow: hidden;
   border-radius: 0 0 32px 32px;
+  margin-bottom: 2rem;
   background:
     linear-gradient(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.25)),
     url("https://www.usforacle.com/wp-content/uploads/sites/2/2020/09/0E7A0624-2048x1365.jpg");
   background-size: cover;
   background-position: center 70%;
+  background-attachment: scroll;
   box-shadow: 0 10px 30px rgba(0,0,0,0.4);
 }
 
@@ -348,7 +320,7 @@ h1 {
 [data-testid="stAppViewContainer"] .main .block-container {
   position: relative;
   z-index: 5;
-  margin-top: -16vh;
+  margin-top: -10vh;
 }
 
 /* The login / dashboard card container with glassy gradient effect */
@@ -356,8 +328,8 @@ h1 {
   position: relative;
   background: rgba(255, 255, 255, 0.88);
   border-radius: 26px;
-  padding: 1.5rem 1.5rem;
-  border: 1px solid var(--usf-green);
+  padding: 3rem 3.5rem;
+  border: 1px solid rgba(5, 5, 5, 0.6);
 
   overflow: hidden;
   animation: cardFloat 0.2s ease-out;
@@ -370,250 +342,6 @@ h1 {
   to {opacity: 1; transform: translateY(0) scale(1);}
 }
 
-/* Input + form controls share the same USF-green outline */
-div[data-baseweb="input"],
-div[data-baseweb="textarea"],
-div[data-baseweb="select"] {
-  border: 1px solid rgba(0, 0, 0, 0.25) !important;
-  border-radius: 12px !important;
-  background-color: #ffffff !important;
-  transition: border-color 0.18s ease;
-  box-shadow: none !important;
-  overflow: hidden;
-}
-
-div[data-baseweb="input"]:focus-within,
-div[data-baseweb="textarea"]:focus-within,
-div[data-baseweb="select"]:focus-within {
-  border-color: var(--usf-green) !important;
-  box-shadow: none !important;
-  outline: none !important;
-}
-
-[data-testid="stNumberInputContainer"] {
-  border: none !important;
-  box-shadow: none !important;
-  background: transparent !important;
-  padding: 0 !important;
-}
-
-[data-testid="stNumberInputContainer"] button {
-  border: none !important;
-  background: transparent !important;
-  color: var(--usf-dark-green) !important;
-}
-
-[data-testid="stNumberInputContainer"] button:hover {
-  background: rgba(0, 103, 71, 0.12) !important;
-}
-
-[data-testid="stNumberInputContainer"] button:focus {
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-div[data-baseweb="select"] > div {
-  border: none !important;
-  box-shadow: none !important;
-  background: transparent !important;
-}
-
-div[data-baseweb="select"] input {
-  border: none !important;
-  background: transparent !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-div[data-baseweb="select"] input:focus {
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-.stDateInput div[data-baseweb="datepicker"] {
-  border: 1px solid rgba(0, 0, 0, 0.25) !important;
-  border-radius: 12px !important;
-  box-shadow: none !important;
-}
-
-.stDateInput div[data-baseweb="datepicker"]:focus-within {
-  border-color: var(--usf-green) !important;
-}
-
-.stDateInput [role="gridcell"] {
-  border: none !important;
-  box-shadow: none !important;
-}
-
-.stDateInput [role="gridcell"] button,
-.stDateInput [role="gridcell"] span,
-.stDateInput [role="gridcell"] div {
-  box-shadow: none !important;
-  outline: none !important;
-  border-radius: 10px !important;
-}
-
-.stDateInput [role="gridcell"][aria-roledescription="button"] {
-  border: none !important;
-}
-
-.stDateInput [role="gridcell"][aria-roledescription="button"][aria-selected="true"],
-.stDateInput [role="gridcell"][aria-roledescription="button"][aria-current="date"] {
-  background: var(--usf-green) !important;
-  color: #ffffff !important;
-}
-
-.stDateInput [role="gridcell"][aria-roledescription="button"]:hover {
-  background: rgba(0, 103, 71, 0.15) !important;
-  color: var(--usf-dark-green) !important;
-}
-
-.stDateInput button[aria-label*="month"] {
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  color: var(--usf-dark-green) !important;
-}
-
-.stDateInput button[aria-label*="month"]:hover {
-  background: rgba(0, 103, 71, 0.12) !important;
-}
-
-.stTextInput input,
-.stTextArea textarea,
-.stNumberInput input,
-.stSelectbox select {
-  font-size: 1rem !important;
-  color: #053826 !important;
-  outline: none !important;
-  border: none !important;
-  background: transparent !important;
-}
-
-div[data-baseweb="input"] button[aria-label],
-div[data-baseweb="input"] button[data-baseweb="base-button"] {
-  border: none !important;
-  box-shadow: none !important;
-  background: transparent !important;
-  color: var(--usf-dark-green) !important;
-  padding: 0 0.6rem !important;
-  outline: none !important;
-}
-
-div[data-baseweb="input"] button[aria-label]::before,
-div[data-baseweb="input"] button[aria-label]::after {
-  display: none !important;
-}
-
-div[data-baseweb="base-input"] {
-  border: none !important;
-  box-shadow: none !important;
-  background: transparent !important;
-  padding: 0 !important;
-}
-
-.stChatInput div[data-baseweb="textarea"],
-.stChatInput div[data-baseweb="base-input"] {
-  border: none !important;
-  box-shadow: none !important;
-  background: transparent !important;
-}
-
-
-.stChatInput textarea[data-testid="stChatInputTextArea"] {
-  border: 1px solid rgba(0, 0, 0, 0.25) !important;
-  border-radius: 999px !important;
-  padding: 0.55rem 1rem !important;
-  box-shadow: none !important;
-  background: #ffffff !important;
-  transition: border-color 0.18s ease;
-  resize: none !important;
-  min-height: 42px !important;
-  max-height: 42px !important;
-  overflow: hidden !important;
-}
-
-.stChatInput textarea[data-testid="stChatInputTextArea"]:focus {
-  border-color: var(--usf-green) !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-.stChatInput .st-emotion-cache-1yk2xem,
-.stChatInput .exaa2ht1 {
-  border: none !important;
-  box-shadow: none !important;
-  background: transparent !important;
-  overflow: visible;
-}
-
-input:focus,
-textarea:focus,
-select:focus,
-button:focus {
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-/* Login/Register submit buttons */
-[data-testid="stFormSubmitButton"] button,
-form[data-testid="stForm"] .stButton > button {
-  background: var(--usf-green) !important;
-  border: 1px solid var(--usf-dark-green) !important;
-  color: #ffffff !important;
-  font-weight: 700 !important;
-  border-radius: 26px !important;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
-  width: fit-content;
-  min-width: 160px;
-  padding: 0.55rem 1.5rem;
-  display: block;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-[data-testid="stFormSubmitButton"] button:hover,
-form[data-testid="stForm"] .stButton > button:hover {
-  background: var(--usf-dark-green) !important;
-  border-color: var(--usf-dark-green) !important;
-  transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
-}
-
-/* Tabs (Login/Register switcher) */
-.stTabs div[role="tablist"] {
-  border-bottom: none !important;
-  margin-bottom: 1.25rem !important;
-  position: relative;
-}
-
-.stTabs button[role="tab"] {
-  border: none !important;
-  background: transparent !important;
-  border-bottom: none !important;
-  box-shadow: none !important;
-  color: rgba(5, 56, 38, 0.65) !important;
-  font-weight: 600 !important;
-  text-transform: uppercase;
-  letter-spacing: 0.55px;
-  padding-bottom: 0.65rem !important;
-}
-
-.stTabs button[role="tab"]::after {
-  display: none !important;
-}
-
-.stTabs button[role="tab"][aria-selected="true"] {
-  color: var(--usf-dark-green) !important;
-}
-
-div[data-baseweb="tab-highlight"] {
-  background: var(--usf-green) !important;
-  height: 3px !important;
-}
-
 /* Makes sure all text and elements stay above glow layers */
 [data-testid="stForm"] * {
   position: relative;
@@ -624,37 +352,27 @@ div[data-baseweb="tab-highlight"] {
 [data-testid="stMetricValue"] {
   color: var(--usf)
 }
-/* Center the empty-state welcome message */
-.chat-welcome {
-  text-align: center;
-  margin: 3rem auto;
-  max-width: 600px;
+/* Hide helper captions and instructions */
+[data-testid="stCaptionContainer"],
+[data-testid="InputInstructions"],
+[data-testid="stCaption"] {
+  display: none !important;
 }
 
-.chat-welcome h2 {
-  font-size: 2rem;
-  margin-bottom: 0.5rem;
-}
-
-.chat-welcome p {
-  font-size: 1.1rem;
-  color: rgba(0, 0, 0, 0.65);
-}
-
-.chat-tool-button button:hover {
-  background: var(--usf-dark-green) !important;
-}
-.tool-picker-card {
-  text-align: center;
-}
-
-.tool-picker-card h4,
-.tool-picker-card .tool-picker-title {
-  text-align: center;
-  margin-bottom: 0.25rem;
-}
-
-.tool-picker-card p {
-  text-align: center;
-  margin-bottom: 1rem;
+/* Remove heading anchor icons */
+[data-testid="stHeading"] a,
+[data-testid="stHeading"] button,
+[data-testid="stHeading"] svg,
+h1 a,
+h2 a,
+h3 a,
+h1 svg,
+h2 svg,
+h3 svg,
+h1 button,
+h2 button,
+h3 button {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
