@@ -96,25 +96,33 @@ if not st.session_state.authenticated and browser_id and browser_token:
 
 # Handle pending login (after user submits login form)
 pending_login = st.session_state.get("pending_login")
-if pending_login and browser_id:
-    # Revoke old session if exists
-    if st.session_state.get("current_browser_id"):
-        revoke_session(st.session_state.current_browser_id)
+if pending_login:
+    if browser_id:
+        # Browser ID is ready, complete login
+        # Revoke old session if exists
+        if st.session_state.get("current_browser_id"):
+            revoke_session(st.session_state.current_browser_id)
 
-    # Issue new session token for this browser
-    user_id = pending_login.get("user_id")
-    username = pending_login.get("username")
-    issue_session_token(user_id, username, browser_id)
+        # Issue new session token for this browser
+        user_id = pending_login.get("user_id")
+        username = pending_login.get("username")
+        issue_session_token(user_id, username, browser_id)
 
-    # Update session state
-    st.session_state.authenticated = True
-    st.session_state.user_id = user_id
-    st.session_state.username = username
-    st.session_state.current_browser_id = browser_id
-    st.session_state.show_dashboard = True
-    st.session_state.pending_login = None
-    st.session_state.login_in_progress = False
-    st.rerun()
+        # Update session state
+        st.session_state.authenticated = True
+        st.session_state.user_id = user_id
+        st.session_state.username = username
+        st.session_state.current_browser_id = browser_id
+        st.session_state.show_dashboard = True
+        st.session_state.pending_login = None
+        st.session_state.login_in_progress = False
+        st.rerun()
+    else:
+        # Browser ID not ready yet, wait for JavaScript to execute
+        # This prevents infinite "Signing you in..." by triggering a rerun
+        import time
+        time.sleep(0.05)  # Give JavaScript 50ms to execute
+        st.rerun()
 
 # Reduce padding at bottom
 st.markdown("""
