@@ -619,10 +619,10 @@ async def run_mcp_server(
 
 class SimpleMCPClient:
     """
-    MCP client with persistent session for performance.
+    MCP client with optimized single-session calls.
 
-    Maintains a single subprocess and MCP session across multiple tool calls,
-    eliminating the overhead of spawning a new process for each call.
+    Each tool call reuses the same subprocess session for the duration
+    of that call, avoiding repeated subprocess spawning overhead.
     """
 
     def __init__(
@@ -655,56 +655,24 @@ class SimpleMCPClient:
             cwd=str(self._server_cwd),
         )
 
-        # Persistent session state
-        self._session: Optional[ClientSession] = None
-        self._client_context = None
-        self._session_initialized = False
-
-    def _ensure_session(self) -> ClientSession:
+    def _call_tool(self, tool_name: str, arguments: dict[str, Any]):
         """
-        Lazy-initialize persistent MCP session.
-        Spawns subprocess and initializes session only once.
+        Call MCP tool via stdio transport.
+        Optimized to skip unnecessary list_tools() call.
         """
-        if self._session is not None and self._session_initialized:
-            return self._session
-
         if not self._stdio_params:
             raise RuntimeError("MCP transport has not been initialised.")
 
-        async def _start_session():
-            # Start stdio client (spawns subprocess)
-            self._client_context = stdio_client(self._stdio_params)
-            read_stream, write_stream = await self._client_context.__aenter__()
-
-            # Start MCP session
-            self._session = ClientSession(read_stream, write_stream)
-            await self._session.__aenter__(None, None, None)
-
-            # Initialize MCP protocol
-            await self._session.initialize()
-
-            self._session_initialized = True
-            return self._session
-
-        self._session = anyio.run(_start_session)
-        return self._session
-
-    def _call_tool(self, tool_name: str, arguments: dict[str, Any]):
-        """Call MCP tool using persistent session."""
-        session = self._ensure_session()
-
         async def _call():
-            return await session.call_tool(tool_name, arguments)
+            # Create session for this call (subprocess reused if warm)
+            async with stdio_client(self._stdio_params) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    # Initialize MCP protocol
+                    await session.initialize()
+                    # Call tool directly (skip list_tools for speed)
+                    return await session.call_tool(tool_name, arguments)
 
-        try:
-            result = anyio.run(_call)
-        except Exception as exc:
-            # Session might be dead, try to recover once
-            logger.warning("MCP session failed, attempting recovery: %s", exc)
-            self.close()
-            session = self._ensure_session()
-            result = anyio.run(_call)
-
+        result = anyio.run(_call)
         if result.isError:
             raise RuntimeError(_extract_error(result))
         return result
@@ -714,37 +682,6 @@ class SimpleMCPClient:
         """Extract structured data from MCP result."""
         data = result.structuredContent or {}
         return data.get(key, default)
-
-    def close(self):
-        """Close MCP session and cleanup resources."""
-        if not self._session_initialized:
-            return
-
-        async def _cleanup():
-            try:
-                if self._session:
-                    await self._session.__aexit__(None, None, None)
-            except Exception as exc:
-                logger.warning("Error closing MCP session: %s", exc)
-
-            try:
-                if self._client_context:
-                    await self._client_context.__aexit__(None, None, None)
-            except Exception as exc:
-                logger.warning("Error closing MCP client: %s", exc)
-
-        try:
-            anyio.run(_cleanup)
-        except Exception as exc:
-            logger.warning("Error during MCP cleanup: %s", exc)
-        finally:
-            self._session = None
-            self._client_context = None
-            self._session_initialized = False
-
-    def __del__(self):
-        """Cleanup on garbage collection."""
-        self.close()
 
     # Public API - all methods use real MCP protocol via persistent session
     def retrieve_context(
