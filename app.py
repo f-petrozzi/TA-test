@@ -396,7 +396,13 @@ else:
         scroll_chat_to_bottom()
 
         # Input area
-        tool_button_label = "＋" if not st.session_state.show_tool_picker else "×"
+        # Button shows × if tool picker OR any assistant is open
+        any_assistant_open = (
+            st.session_state.show_tool_picker
+            or st.session_state.show_email_builder
+            or st.session_state.show_meeting_builder
+        )
+        tool_button_label = "×" if any_assistant_open else "＋"
         user_input = None
         toggle_col, input_col = st.columns([0.03, 0.97], gap=None)
 
@@ -404,17 +410,18 @@ else:
             if st.button(
                 tool_button_label,
                 key="chat_tool_toggle",
-                help="Open Bulls assistants" if not st.session_state.show_tool_picker else "Close Bulls assistants",
+                help="Close Bulls assistants" if any_assistant_open else "Open Bulls assistants",
                 use_container_width=True,
             ):
-                # Toggle tool picker and close any open assistants
-                new_state = not st.session_state.show_tool_picker
-                st.session_state.show_tool_picker = new_state
-
-                # If closing, also close any open assistants
-                if not new_state:
+                # Close everything if anything is open, otherwise open tool picker
+                if any_assistant_open:
+                    # Close all
+                    st.session_state.show_tool_picker = False
                     st.session_state.show_email_builder = False
                     st.session_state.show_meeting_builder = False
+                else:
+                    # Open tool picker
+                    st.session_state.show_tool_picker = True
 
                 st.rerun()
 

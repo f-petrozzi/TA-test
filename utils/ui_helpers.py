@@ -79,8 +79,13 @@ def inject_global_styles() -> None:
 
 def scroll_chat_to_bottom() -> None:
     """
-    Improved auto-scroll logic that scrolls smoothly to the bottom of chat.
-    Uses a more reliable approach with proper timing.
+    Smart auto-scroll that sticks to bottom when new messages appear,
+    but stops when user scrolls up manually (like ChatGPT).
+
+    Behavior:
+    - Always scrolls to bottom when new content appears
+    - Detects user scroll-up and disables auto-scroll
+    - Re-enables auto-scroll when user manually scrolls to bottom
     """
     # Create a unique token based on current state to trigger scroll on changes
     messages_len = len(st.session_state.get("messages", []))
@@ -95,42 +100,90 @@ def scroll_chat_to_bottom() -> None:
         <div style="display:none" data-scroll-token="{token}"></div>
         <script>
         (function() {{
+            // Storage key for scroll lock state
+            const SCROLL_LOCK_KEY = 'chatScrollLocked';
+
+            // Check if user has manually scrolled up
+            let isScrollLocked = sessionStorage.getItem(SCROLL_LOCK_KEY) === 'true';
+
             const scrollToBottom = () => {{
                 try {{
-                    // Try to access parent document (Streamlit iframe)
                     const doc = window.parent?.document || document;
-
-                    // Target the main content container
                     const mainBlock = doc.querySelector('.main .block-container');
                     const scrollTarget = mainBlock || doc.documentElement || doc.body;
 
                     if (scrollTarget) {{
-                        // Smooth scroll to bottom
-                        scrollTarget.scrollTo({{
-                            top: scrollTarget.scrollHeight,
-                            behavior: 'smooth'
-                        }});
+                        // Check if we're near the bottom (within 100px)
+                        const isNearBottom = scrollTarget.scrollHeight - scrollTarget.scrollTop - scrollTarget.clientHeight < 100;
+
+                        // Only auto-scroll if not locked OR if user is near bottom
+                        if (!isScrollLocked || isNearBottom) {{
+                            scrollTarget.scrollTo({{
+                                top: scrollTarget.scrollHeight,
+                                behavior: 'smooth'
+                            }});
+
+                            // If we successfully scrolled to bottom, unlock
+                            if (isNearBottom) {{
+                                isScrollLocked = false;
+                                sessionStorage.setItem(SCROLL_LOCK_KEY, 'false');
+                            }}
+                        }}
                     }}
                 }} catch (err) {{
-                    // Fallback for security restrictions
-                    console.debug('Scroll fallback:', err);
-                    const fallback = document.documentElement || document.body;
-                    fallback.scrollTop = fallback.scrollHeight;
+                    console.debug('Scroll error:', err);
                 }}
             }};
 
-            // Wait for DOM to be fully ready, then scroll
+            // Set up scroll listener to detect user scrolling up
+            const setupScrollListener = () => {{
+                try {{
+                    const doc = window.parent?.document || document;
+                    const mainBlock = doc.querySelector('.main .block-container');
+                    const scrollTarget = mainBlock || doc.documentElement || doc.body;
+
+                    if (scrollTarget && !scrollTarget.dataset.scrollListenerAttached) {{
+                        scrollTarget.dataset.scrollListenerAttached = 'true';
+
+                        let scrollTimeout;
+                        scrollTarget.addEventListener('scroll', () => {{
+                            clearTimeout(scrollTimeout);
+                            scrollTimeout = setTimeout(() => {{
+                                const atBottom = scrollTarget.scrollHeight - scrollTarget.scrollTop - scrollTarget.clientHeight < 50;
+
+                                if (atBottom) {{
+                                    // User scrolled to bottom manually - unlock auto-scroll
+                                    isScrollLocked = false;
+                                    sessionStorage.setItem(SCROLL_LOCK_KEY, 'false');
+                                }} else {{
+                                    // User scrolled up - lock auto-scroll
+                                    const currentScroll = scrollTarget.scrollTop;
+                                    const maxScroll = scrollTarget.scrollHeight - scrollTarget.clientHeight;
+
+                                    // Only lock if user scrolled up (not at bottom)
+                                    if (currentScroll < maxScroll - 50) {{
+                                        isScrollLocked = true;
+                                        sessionStorage.setItem(SCROLL_LOCK_KEY, 'true');
+                                    }}
+                                }}
+                            }}, 150);
+                        }}, {{ passive: true }});
+                    }}
+                }} catch (err) {{
+                    console.debug('Listener setup error:', err);
+                }}
+            }};
+
+            // Execute scroll and setup listener
             if (document.readyState === 'complete') {{
-                // Add small delay to ensure content is rendered
-                setTimeout(scrollToBottom, 100);
+                setupScrollListener();
+                setTimeout(scrollToBottom, 50);
             }} else {{
                 window.addEventListener('load', () => {{
-                    setTimeout(scrollToBottom, 100);
+                    setupScrollListener();
+                    setTimeout(scrollToBottom, 50);
                 }}, {{ once: true }});
             }}
-
-            // Also try immediate scroll for fast updates
-            setTimeout(scrollToBottom, 50);
         }})();
         </script>
         """,
