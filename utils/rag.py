@@ -31,8 +31,8 @@ AZURE_ORCHESTRATOR_DEPLOYMENT = os.getenv("AZURE_PHI4_ORCHESTRATOR") or os.geten
 
 SUPABASE_MATCH_FUNCTION = os.getenv("SUPABASE_MATCH_FUNCTION", "match_document_chunks")
 SUPABASE_DEFAULT_MATCH_COUNT = int(os.getenv("SUPABASE_MATCH_COUNT", "10"))
-# Reduced from 60 to 30 - we only rerank top 12, so no need to fetch 60
-SUPABASE_INITIAL_MATCH_COUNT = int(os.getenv("SUPABASE_INITIAL_MATCH_COUNT", "30"))
+# Increased from 30 to 50 - wider funnel catches more relevant docs before reranking
+SUPABASE_INITIAL_MATCH_COUNT = int(os.getenv("SUPABASE_INITIAL_MATCH_COUNT", "50"))
 SUPABASE_CHUNKS_TABLE = os.getenv("SUPABASE_CHUNKS_TABLE", "chunks")
 CROSS_ENCODER_MODEL = os.getenv("CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 CONTEXT_MAX_SNIPPETS = int(os.getenv("RAG_CONTEXT_SNIPPETS", "10"))
@@ -117,14 +117,14 @@ def _rerank_hits(query: str, hits: List[Dict[str, Any]], top_k: int) -> List[Dic
     if not hits:
         return []
 
-    # Performance optimization: Only rerank top 12 candidates instead of all 60
-    # Further reduced from 20 to 12 for ~40% faster reranking
-    # This significantly speeds up response time while maintaining quality
-    candidates = hits[:min(12, len(hits))]
+    # Rerank top 20 candidates - balances quality and speed
+    # Increased from 12 to catch more relevant docs that were filtered too early
+    candidates = hits[:min(20, len(hits))]
 
     ce = _get_cross_encoder()
-    # Truncate documents to 800 chars instead of 1200 for faster inference
-    pairs = [(query, h.get("doc", "")[:800]) for h in candidates]
+    # Use full 1200 chars for better semantic matching (chunks avg ~700-960 chars)
+    # Increased from 800 to avoid truncating important content at end of chunks
+    pairs = [(query, h.get("doc", "")[:1200]) for h in candidates]
     scores = ce.predict(pairs)
     ranked = sorted(zip(candidates, scores), key=lambda t: float(t[1]), reverse=True)
     reranked: List[Dict[str, Any]] = []

@@ -51,6 +51,17 @@ HEADER = re.compile(r"^#{1,6}\s+")
 YAML_FRONT = re.compile(r"^---\s*\n.*?\n---\s*\n", re.S)
 USF_LINK = re.compile(r"https?://(?:www\.)?usf\.edu[^\s\]\)]+", re.I)
 
+# Navigation patterns to strip (reduces duplicate pollution)
+SKIP_TO_CONTENT = re.compile(r"\[Skip (?:to|Over) [^\]]+\]\([^\)]+\)", re.I)
+BREADCRUMB_NAV = re.compile(r"## Breadcrumb Navigation.*?(?=\n##|\n\*|\Z)", re.S | re.I)
+MAIN_NAV_SECTION = re.compile(r"## Main Navigat(?:ion)?.*?(?=\n##|\n\*|\Z)", re.S | re.I)
+# Generic footer navigation (About USF, Academics, Admissions, etc.)
+FOOTER_NAV = re.compile(
+    r"^\* \[(?:About USF|Academics|Admissions|Locations|Campus Life|Research|Administrative Units|"
+    r"Regulations & Policies|Human Resources|Work at USF|Emergency & Safety)\]\(https://www\.usf\.edu/[^\)]+\)\s*$",
+    re.M
+)
+
 
 # text helpers
 def first_usf_url(text: str) -> Optional[str]:
@@ -74,9 +85,32 @@ def derive_category(path: Path) -> str:
 def sha1(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()
 
+def strip_navigation(text: str) -> str:
+    """
+    Remove common USF website navigation elements that pollute vector search.
+    Preserves actual content and citation metadata.
+    """
+    # Strip skip-to-content links
+    text = SKIP_TO_CONTENT.sub("", text)
+
+    # Strip breadcrumb navigation sections
+    text = BREADCRUMB_NAV.sub("", text)
+
+    # Strip main navigation sections
+    text = MAIN_NAV_SECTION.sub("", text)
+
+    # Strip footer navigation (the 66x duplicate)
+    text = FOOTER_NAV.sub("", text)
+
+    # Clean up extra whitespace left by removals
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip()
+
 def clean_text(s: str) -> str:
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     s = YAML_FRONT.sub("", s, count=1)  # strip YAML front-matter if present
+    s = strip_navigation(s)  # Remove navigation pollution
     s = _WS.sub(" ", s).strip()
     s = _NL.sub("\n\n", s)
     return s.strip()
@@ -207,7 +241,11 @@ def recursive_chunks(text: str, chunk_size: int, overlap: int) -> List[str]:
         out = with_ol
     return out
 
-def glue_short_chunks(chunks: List[str], min_chars: int = 300) -> List[str]:
+def glue_short_chunks(chunks: List[str], min_chars: int = 200) -> List[str]:
+    """
+    Merge very short chunks to avoid fragmentation.
+    Reduced from 300 to 200 to keep chunks closer to target size (700).
+    """
     if not chunks:
         return chunks
     out: List[str] = []
@@ -447,7 +485,7 @@ def main():
                 continue
 
             raw_chunks = recursive_chunks(text, args.chunk, args.overlap)
-            raw_chunks = glue_short_chunks(raw_chunks, min_chars=300)
+            raw_chunks = glue_short_chunks(raw_chunks, min_chars=200)
 
             seen = set()
             chunks: List[str] = []
