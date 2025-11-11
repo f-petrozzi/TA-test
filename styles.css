@@ -3,17 +3,13 @@
   --usf-dark-green: #004f3c;
   --usf-gold: #cfc493;
   --usf-white: #ffffff;
-  --usf-light-bg: #f7f8f7;
   --usf-shadow: rgba(0, 0, 0, 0.12);
 }
 
 /* Base Page Styles (applies globally across all pages) */
 html, body {
-  background-color: var(--usf-light-bg);
-  color: #111;
   font-family: 'Segoe UI', Roboto, 'Open Sans', sans-serif;
   scroll-behavior: smooth;
-  transition: background-color 0.3s ease, color 0.3s ease;
   margin: 0;
 }
 
@@ -26,30 +22,6 @@ html, body {
 html, body, .stApp {
   position: relative;
   overflow-x: hidden;
-  background-color: var(--usf-light-bg);
-}
-
-/* This overlay creates a soft sweeping sunlight effect on all pages */
-html::before {
-  content: "";
-  position: fixed;
-  top: 0;
-  left: -70%;
-  width: 80%;
-  height: 100%;
-  background: linear-gradient(
-    75deg,
-    rgba(255, 255, 255, 0.12) 0%,
-    rgba(240, 235, 210, 0.15) 30%,
-    rgba(200, 220, 190, 0.10) 60%,
-    transparent 100%
-  );
-  transform: skewX(-15deg);
-  animation: globalSunSweep 22s ease-in-out infinite;
-  z-index: 0;
-  pointer-events: none;
-  mix-blend-mode: soft-light;
-  opacity: 0.55;
 }
 
 /* Defines how the sunlight gradient moves across the screen */
@@ -90,8 +62,7 @@ h1 {
    This defines the layout, color, and typography inside the sidebar.
    Includes buttons, session list, and logout area. */
 [data-testid="stSidebar"] {
-  background: linear-gradient(180deg, var(--usf-dark-green) 0%, var(--usf-green) 80%) !important;
-  color: var(--usf-white);
+  background: var(--usf-green);
   box-shadow: 4px 0 18px rgba(0, 0, 0, 0.25);
   border-right: 2px solid rgba(207,196,147,0.3);
   font-size: 1.05rem !important;
@@ -99,7 +70,6 @@ h1 {
 
 /* All text inside sidebar is clean and readable */
 [data-testid="stSidebar"] * {
-  color: #ffffff !important;
   font-size: 1.05rem !important;
   font-weight: 500 !important;
   opacity: 1 !important;
@@ -119,12 +89,9 @@ h1 {
   text-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
 }
 
-
-
 /* Sidebar buttons and links (New Chat, Logout, etc.) */
 [data-testid="stSidebar"] button,
 [data-testid="stSidebar"] a {
-  color: #ffffff !important;
   font-size: 1.05rem !important;
   font-weight: 600 !important;
   background: rgba(255,255,255,0.08) !important;
@@ -149,23 +116,13 @@ h1 {
 [data-testid="stSidebar"] input,
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] span {
-  color: #ffffff !important;
   font-size: 1.05rem !important;
   opacity: 1 !important;
-}
-
-/* Logout button section with top border separation */
-.logout-section {
-  margin-top: 2rem;
-  text-align: center;
-  border-top: 1px solid rgba(255,255,255,0.3);
-  padding-top: 1.2rem;
 }
 
 /* Logout button styled with gold-to-green gradient */
 .logout-section button {
   background: linear-gradient(90deg, var(--usf-gold) 0%, var(--usf-green) 100%) !important;
-  color: #ffffff !important;
   font-weight: 700 !important;
   font-size: 1.15rem !important;
   border-radius: 14px !important;
@@ -273,6 +230,44 @@ h1 {
   opacity: 0.6;
 }
 
+/* Chat tool picker + welcome tweaks */
+.tool-picker-card {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.tool-picker-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--usf-green);
+}
+
+.tool-picker-subtitle {
+  color: var(--usf-text-color);
+  font-weight: 500;
+}
+
+.chat-welcome {
+  text-align: center;
+  padding: 3rem 0;
+}
+
+.chat-welcome h2 {
+  margin-bottom: 0.5rem;
+  color: var(--usf-green);
+}
+
+.chat-welcome p {
+  margin: 0 auto;
+  color: var(--usf-text-color);
+  font-size: 1.05rem;
+}
+
+[data-testid="stChatInput"] {
+  margin-left: 1rem;
+  margin-bottom: 3rem;
+}
+
 /* Styles for the hero banner text */
 .usf-hero h1,
 .usf-hero p {
@@ -285,14 +280,10 @@ h1 {
 /* Main hero heading (white text with glow) */
 .usf-hero h1 {
   color: #004f3c;
-  background: none !important;
-  -webkit-background-clip: initial !important;
   -webkit-text-fill-color: #004f3c !important;
   font-size: 3.4rem;
   font-weight: 800;
   letter-spacing: 1px;
-  margin-bottom: 0rem;
-  text-shadow: none;
 }
 
 .hero-heading {
@@ -301,7 +292,6 @@ h1 {
 
 .hero-heading .emoji {
   filter: brightness(0) saturate(100%) invert(23%) sepia(79%) saturate(512%) hue-rotate(102deg) brightness(94%) contrast(92%);
-  margin-right: 0.35rem;
 }
 
 /* Hero subtitle text */
@@ -310,18 +300,12 @@ h1 {
   font-size: 1.2rem;
   font-weight: 500;
   letter-spacing: 0.5px;
-  text-shadow: none;
 }
 
 /* hero-auth styles handled inline for login view */
 
 /* LOGIN & DASHBOARD CARDS
    Controls the translucent form cards and dashboard layout */
-[data-testid="stAppViewContainer"] .main .block-container {
-  position: relative;
-  z-index: 5;
-  margin-top: -10vh;
-}
 
 /* The login / dashboard card container with glassy gradient effect */
 [data-testid="stForm"] {
@@ -356,6 +340,23 @@ h1 {
 [data-testid="stCaptionContainer"],
 [data-testid="InputInstructions"],
 [data-testid="stCaption"] {
+  display: none !important;
+}
+
+/* Bull avatar for user chat messages */
+[data-testid="stChatMessageAvatarUser"],
+.st-emotion-cache-23r7bk.e1ypd8m73 {
+  background-color: var(--usf-green);
+}
+
+[data-testid="stChatMessageAvatarUser"]::before,
+.st-emotion-cache-23r7bk.e1ypd8m73::before {
+  content: "🐂";
+  font-size: 1.3rem;
+}
+
+[data-testid="stChatMessageAvatarUser"] svg,
+.st-emotion-cache-23r7bk.e1ypd8m73 svg {
   display: none !important;
 }
 

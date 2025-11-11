@@ -1,10 +1,17 @@
 ## app.py
 import os
+import re
 import secrets
 import time as time_module
 from datetime import date, datetime, time
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / ".streamlit" / "config.toml"
@@ -12,8 +19,14 @@ if CONFIG_PATH.exists():
     os.environ.setdefault("STREAMLIT_CONFIG_FILE", str(CONFIG_PATH))
 
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
+
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("TRANSFORMERS_NO_FLAX", "1")
+os.environ.setdefault("TRANSFORMERS_NO_JAX", "1")
 
 from utils.database import ChatDatabase
 from utils.rag import generate_with_rag, estimate_tokens
@@ -31,6 +44,48 @@ google_tools = GoogleWorkspaceTools()
 mcp_client = SimpleMCPClient(chat_db=db, google_tools=google_tools)
 UTC = ZoneInfo("UTC")
 EASTERN = ZoneInfo("America/New_York")
+
+
+def _adjust_hex_color(color: str, factor: float) -> str:
+    """Lighten (factor>0) or darken (factor<0) a hex color."""
+    if not color:
+        return color
+    hex_value = color.strip().lstrip("#")
+    if len(hex_value) not in (3, 6):
+        return color
+    if len(hex_value) == 3:
+        hex_value = "".join(ch * 2 for ch in hex_value)
+    comps = [int(hex_value[i : i + 2], 16) for i in (0, 2, 4)]
+    out = []
+    for comp in comps:
+        if factor >= 0:
+            comp = comp + (255 - comp) * min(factor, 1)
+        else:
+            comp = comp * max(1 + factor, 0)
+        out.append(int(max(0, min(255, round(comp)))))
+    return "#{:02x}{:02x}{:02x}".format(*out)
+
+
+@lru_cache(maxsize=1)
+def _load_theme_colors() -> dict[str, str]:
+    defaults = {
+        "primary": "#006747",
+        "background": "#f7f8f7",
+        "secondary": "#e7efe5",
+        "text": "#111111",
+    }
+    if CONFIG_PATH.exists():
+        try:
+            data = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            theme = data.get("theme", {})
+            defaults["primary"] = theme.get("primaryColor", defaults["primary"])
+            defaults["background"] = theme.get("backgroundColor", defaults["background"])
+            defaults["secondary"] = theme.get("secondaryBackgroundColor", defaults["secondary"])
+            defaults["text"] = theme.get("textColor", defaults["text"])
+        except (tomllib.TOMLDecodeError, OSError):
+            pass
+    defaults["primary_dark"] = _adjust_hex_color(defaults["primary"], -0.2)
+    return defaults
 
 
 def _format_est_timestamp(raw: str | None) -> str:
@@ -105,6 +160,30 @@ def _maybe_update_query_token(token: str | None) -> None:
     st.query_params = normalized
 
 
+_SUBJECT_PREFIX = re.compile(
+    r"^\s*(?:\*\*|__|\*|_|\-)?\s*subject\s*(?:\*\*|__|\*|_)?\s*[:\-–—]\s*(.+)$",
+    re.I,
+)
+
+
+def _split_subject_from_body(text: str) -> tuple[Optional[str], str]:
+    """Detect leading 'Subject: ...' lines and return (subject, body_without_line)."""
+    if not text:
+        return None, ""
+    lines = text.splitlines()
+    # Drop leading blank lines before looking for subject prefix
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if not lines:
+        return None, ""
+    match = _SUBJECT_PREFIX.match(lines[0])
+    if not match:
+        return None, text
+    subject = match.group(1).strip()
+    remaining = "\n".join(lines[1:]).lstrip("\n")
+    return subject or None, remaining
+
+
 class SmoothStreamer:
     """Buffers model deltas so they appear as rapid word-by-word output."""
 
@@ -112,11 +191,11 @@ class SmoothStreamer:
         self,
         placeholder,
         *,
-        min_chars: int = 3,
-        min_words: int = 1,
-        max_lag: float = 0.06,
-        initial_hold: float = 0.18,
-        prebuffer_chars: int = 35,
+        min_chars: int = 1,
+        min_words: int = 0,
+        max_lag: float = 0.04,
+        initial_hold: float = 0.05,
+        prebuffer_chars: int = 8,
     ) -> None:
         self._placeholder = placeholder
         self._min_chars = min_chars
@@ -149,7 +228,10 @@ class SmoothStreamer:
             return
 
         new_words = self._count_words(delta)
-        ready_by_words = new_words >= self._min_words and delta[-1:].isspace()
+        if self._min_words <= 0:
+            ready_by_words = new_words > 0
+        else:
+            ready_by_words = new_words >= self._min_words and delta[-1:].isspace()
         ready_by_chars = len(delta) >= self._min_chars
         timed_out = (now - self._last_flush) >= self._max_lag
 
@@ -179,9 +261,22 @@ class SmoothStreamer:
 
 def _inject_global_styles() -> None:
     css_path = BASE_DIR / "styles.css"
+    chunks = []
+    colors = _load_theme_colors()
+    chunks.append(
+        f"""
+:root {{
+  --usf-green: {colors['primary']};
+  --usf-dark-green: {colors['primary_dark']};
+  --usf-light-bg: {colors['background']};
+  --usf-secondary-bg: {colors['secondary']};
+  --usf-text-color: {colors['text']};
+}}
+"""
+    )
     if css_path.exists():
-        css = css_path.read_text(encoding="utf-8")
-        st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+        chunks.append(css_path.read_text(encoding="utf-8"))
+    st.markdown("<style>" + "\n".join(chunks) + "</style>", unsafe_allow_html=True)
 
 # Persist auth across reruns (st.session_state)
 if "auth" not in st.session_state:
@@ -345,8 +440,8 @@ def _render_tool_picker() -> None:
     st.markdown(
         """
         <div class="tool-picker-card">
-            <h4 class="tool-picker-title">Assisted Actions</h4>
-            <p>Tap a Bulls assistant to draft outreach or schedule meetings.</p>
+            <div class="tool-picker-title" role="heading" aria-level="4">Assisted Actions</div>
+            <p class="tool-picker-subtitle">Tap a Bulls assistant to draft outreach or schedule meetings.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -367,6 +462,44 @@ def _render_tool_picker() -> None:
         if st.button("✕ Close", key="picker_close", use_container_width=True):
             _activate_assistant(None, rerun=True)
         st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _scroll_chat_to_bottom() -> None:
+    messages_len = len(st.session_state.get("messages", []))
+    toggles = (
+        int(bool(st.session_state.get("show_tool_picker"))),
+        int(bool(st.session_state.get("show_email_builder"))),
+        int(bool(st.session_state.get("show_meeting_builder"))),
+    )
+    token = "-".join(str(value) for value in (messages_len,) + toggles)
+    components.html(
+        f"""
+        <div style="display:none" data-scroll-token="{token}"></div>
+        <script>
+        (function() {{
+            const tryScroll = () => {{
+                try {{
+                    const doc = window.parent && window.parent.document ? window.parent.document : document;
+                    const block = doc.querySelector('.main .block-container');
+                    const target = block || doc.scrollingElement || doc.documentElement || doc.body;
+                    if (!target) return;
+                    target.scrollTo({{ top: target.scrollHeight, behavior: 'smooth' }});
+                }} catch (err) {{
+                    const doc = document;
+                    const fallback = doc.scrollingElement || doc.documentElement || doc.body;
+                    fallback.scrollTop = fallback.scrollHeight;
+                }}
+            }};
+            if (document.readyState === "complete") {{
+                setTimeout(tryScroll, 50);
+            }} else {{
+                window.addEventListener("load", () => setTimeout(tryScroll, 50), {{ once: true }});
+            }}
+        }})();
+        </script>
+        """,
+        height=0,
+    )
 
 
 def _maybe_auto_open_assistant(response_text: str | None) -> None:
@@ -441,7 +574,8 @@ def _start_email_draft(to_addr: str, subject: str, student_msg: str) -> None:
         return
     cleaned_draft = drafted.get("body", "")
     matched_chunks = drafted.get("context_hits", [])
-    subject = drafted.get("subject", subject)
+    inline_subject, cleaned_draft = _split_subject_from_body(cleaned_draft)
+    subject = drafted.get("subject") or inline_subject or subject
     if subject:
         st.session_state.email_subject_sync_value = subject
 
@@ -493,7 +627,8 @@ def _apply_email_edit(instructions: str) -> None:
     if not drafted:
         return
     revised = drafted.get("body", pending.get("body", ""))
-    new_subject = drafted.get("subject")
+    inline_subject, revised = _split_subject_from_body(revised)
+    new_subject = drafted.get("subject") or inline_subject
     if new_subject:
         pending["subject"] = new_subject
         st.session_state.email_subject_sync_value = new_subject
@@ -1006,7 +1141,7 @@ else:
         if sessions:
             st.markdown(f"### 📁 Sessions ({len(sessions)})")
 
-            with st.container(height=500, border=True):
+            with st.container(height=435, border=True):
                 for session in sessions:
                     session_id = session.get("id")
                     is_current = session_id == st.session_state.current_session_id
@@ -1124,6 +1259,7 @@ else:
 
                     st.caption("Recent actions collapse automatically after you return to the chat.")
                     st.markdown("</div>", unsafe_allow_html=True)
+        _scroll_chat_to_bottom()
 
         tool_button_label = "＋" if not st.session_state.show_tool_picker else "×"
         user_input = None
@@ -1308,7 +1444,7 @@ else:
         st.divider()
 
         # Recent sessions
-        if st.session_state.show_dashboard:
+        if st.session_state.get("show_dashboard", True):
             st.subheader("📌 Recent Sessions")
 
             if sessions:

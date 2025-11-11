@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -61,6 +62,26 @@ def _require_env(name: str) -> str:
 
 EMAIL_SYSTEM_PROMPT = _require_env("EMAIL_SYSTEM_PROMPT")
 MEETING_SYSTEM_PROMPT = _require_env("MEETING_SYSTEM_PROMPT")
+
+_EMAIL_SUBJECT_PREFIX = re.compile(
+    r"^\s*(?:\*\*|__|\*|_|\-)?\s*subject\s*(?:\*\*|__|\*|_)?\s*[:\-–—]\s*(.+)$",
+    re.I,
+)
+
+def _extract_subject_and_body(text: str) -> tuple[Optional[str], str]:
+    if not text:
+        return None, ""
+    lines = text.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if not lines:
+        return None, ""
+    match = _EMAIL_SUBJECT_PREFIX.match(lines[0])
+    if not match:
+        return None, text
+    subject = match.group(1).strip()
+    body = "\n".join(lines[1:]).lstrip("\n")
+    return (subject or None), body
 
 class _ToolRuntime:
     def __init__(
@@ -160,6 +181,10 @@ class _ToolRuntime:
             temperature=0.25,
             deployment_name="AZURE_PHI4_EMAIL",
         ).strip()
+        extracted_subject, cleaned_body = _extract_subject_and_body(body)
+        if extracted_subject:
+            subject_line = extracted_subject
+            body = cleaned_body
         sources = build_sources_block(hits)
         if sources and "**Sources**" not in body:
             body = f"{body}\n\n**Sources**\n{sources}"

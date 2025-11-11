@@ -5,9 +5,7 @@ from typing import Generator, List, Dict, Any
 from openai import AzureOpenAI, OpenAI, NotFoundError
 
 
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+DEFAULT_AZURE_OPENAI_API_VERSION = "2024-02-15-preview"
 
 
 def require_azure_env(value: str | None, name: str) -> str:
@@ -29,8 +27,9 @@ def _build_openai_compatible_client(endpoint: str, key: str) -> OpenAI:
 
 @lru_cache(maxsize=1)
 def get_azure_client():
-    endpoint = require_azure_env(AZURE_OPENAI_ENDPOINT, "AZURE_OPENAI_ENDPOINT").rstrip("/")
-    key = require_azure_env(AZURE_OPENAI_API_KEY, "AZURE_OPENAI_API_KEY")
+    endpoint = require_azure_env(os.getenv("AZURE_OPENAI_ENDPOINT"), "AZURE_OPENAI_ENDPOINT").rstrip("/")
+    key = require_azure_env(os.getenv("AZURE_OPENAI_API_KEY"), "AZURE_OPENAI_API_KEY")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", DEFAULT_AZURE_OPENAI_API_VERSION)
 
     # New Azure AI Inference endpoints (services.ai.azure.com) expose an OpenAI-compatible API.
     if ".services.ai.azure.com" in endpoint or endpoint.endswith("/openai/v1") or "/openai/" in endpoint:
@@ -39,7 +38,7 @@ def get_azure_client():
     # Classic Azure OpenAI resource (resource.openai.azure.com) requires api-version parameter.
     return AzureOpenAI(
         api_key=key,
-        api_version=AZURE_OPENAI_API_VERSION,
+        api_version=api_version,
         azure_endpoint=endpoint,
     )
 

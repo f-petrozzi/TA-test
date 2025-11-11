@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import math
 import os
 import re
 import uuid
@@ -17,6 +18,7 @@ load_dotenv()
 
 # env helpers
 HUGGINGFACE_MODEL = os.getenv("HUGGINGFACE_EMBEDDING_MODEL", "google/embeddinggemma-300m")
+EMBEDDER_ID = f"hf::{HUGGINGFACE_MODEL}"
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_API_KEY")
@@ -45,6 +47,7 @@ _WS = re.compile(r"[ \t\f\v]+")
 _NL = re.compile(r"\n{3,}")
 PARA_BREAK = re.compile(r"\n\s*\n")
 BULLET = re.compile(r"^\s*(?:[\u2022\-\*\u25E6]|\d+\.)\s+")
+HEADER = re.compile(r"^#{1,6}\s+")
 YAML_FRONT = re.compile(r"^---\s*\n.*?\n---\s*\n", re.S)
 USF_LINK = re.compile(r"https?://(?:www\.)?usf\.edu[^\s\]\)]+", re.I)
 
@@ -95,7 +98,12 @@ def reflow_paragraphs(text: str) -> str:
             continue
         buf: List[str] = []
         for ln in lines:
-            if BULLET.match(ln):
+            if HEADER.match(ln):
+                if buf:
+                    out.append(" ".join(buf))
+                    buf = []
+                out.append(ln)
+            elif BULLET.match(ln):
                 if buf:
                     out.append(" ".join(buf))
                     buf = []
@@ -108,30 +116,42 @@ def reflow_paragraphs(text: str) -> str:
     return "\n".join(out).strip()
 
 def group_faq_blocks(text: str) -> str:
-    """Merge Q + A style lines into larger blocks; pass-through if none."""
+    """Keep each Q/A pair self-contained without merging unrelated blocks."""
     q_start = re.compile(r"^\s*(?:Q[:\-\)]|Question\b|How\b|What\b|When\b|Where\b|Why\b|Can\b|Do\b|Does\b|Is\b|Are\b)", re.I)
     a_mark = re.compile(r"^\s*A[:\-\)]\s*", re.I)
     lines = text.split("\n")
-    blocks, cur = [], []
+    blocks: List[str] = []
+    current_block: List[str] = []
     saw_q = False
+    capturing_answer = False
+
+    def _flush():
+        nonlocal current_block
+        if current_block:
+            blocks.append("\n".join(current_block).strip())
+            current_block = []
+
     for ln in lines:
-        if not ln.strip():
-            if cur:
-                blocks.append("\n".join(cur))
-                cur = []
+        stripped = ln.strip()
+        if not stripped:
+            _flush()
             blocks.append("")
+            capturing_answer = False
             continue
-        if q_start.match(ln):
+        if q_start.match(stripped):
             saw_q = True
-            if cur:
-                blocks.append("\n".join(cur))
-                cur = []
-            cur.append(ln)
+            _flush()
+            current_block.append(stripped)
+            capturing_answer = True
+            continue
+        if capturing_answer:
+            current_block.append(a_mark.sub("", ln, count=1))
         else:
-            cur.append(a_mark.sub("", ln))
-    if cur:
-        blocks.append("\n".join(cur))
-    return "\n\n".join(blocks) if saw_q else text
+            _flush()
+            blocks.append(ln)
+
+    _flush()
+    return "\n".join(blocks) if saw_q else text
 
 def recursive_chunks(text: str, chunk_size: int, overlap: int) -> List[str]:
     if len(text) <= chunk_size:
@@ -178,8 +198,12 @@ def recursive_chunks(text: str, chunk_size: int, overlap: int) -> List[str]:
     if overlap > 0 and len(out) > 1:
         with_ol = [out[0]]
         for i in range(1, len(out)):
-            prev_tail = out[i - 1][-overlap:]
-            with_ol.append((prev_tail + out[i]) if prev_tail else out[i])
+            prev_tail = _tail_snippet(out[i - 1], overlap)
+            if prev_tail:
+                combined = (prev_tail + "\n\n" + out[i]).strip()
+            else:
+                combined = out[i]
+            with_ol.append(combined)
         out = with_ol
     return out
 
@@ -197,6 +221,33 @@ def glue_short_chunks(chunks: List[str], min_chars: int = 300) -> List[str]:
 def fingerprint(text: str) -> str:
     norm = " ".join(text.lower().split())
     return hashlib.sha1(norm.encode("utf-8")).hexdigest()
+
+def _tail_snippet(text: str, target_chars: int) -> str:
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    collected: List[str] = []
+    total = 0
+    for sentence in reversed(sentences):
+        if not sentence:
+            continue
+        collected.insert(0, sentence)
+        total += len(sentence)
+        if total >= target_chars:
+            break
+    return " ".join(collected).strip()
+
+
+def l2_normalize(vec: List[float]) -> List[float]:
+    """Return a unit-length version of vec to keep embeddings comparable."""
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm == 0:
+        return vec
+    return [x / norm for x in vec]
+
+
+def _format_for_embedding(text: str, title: Optional[str]) -> str:
+    """Mirror the Chroma ingestion format for consistency."""
+    normalized_title = (title or "").strip() or "none"
+    return f"title: {normalized_title} | text: {text}"
 
 def iter_md_files(root: Path) -> Iterable[Path]:
     for p in sorted(root.rglob("*.md")):
@@ -222,11 +273,17 @@ def _hf_request(payload: dict) -> list:
         raise RuntimeError(f"Unexpected Hugging Face response: {data}")
     return data
 
-def embed_texts(texts: List[str], batch: int = 8) -> List[List[float]]:
+def embed_texts(texts: List[str], titles: Optional[List[str]] = None, batch: int = 8) -> List[List[float]]:
     vectors: List[List[float]] = []
     for i in range(0, len(texts), max(1, batch)):
         subset = texts[i:i + batch]
-        payload = {"inputs": subset, "options": {"wait_for_model": True}}
+        formatted: List[str] = []
+        for j, chunk in enumerate(subset):
+            title = None
+            if titles and (i + j) < len(titles):
+                title = titles[i + j]
+            formatted.append(_format_for_embedding(chunk, title))
+        payload = {"inputs": formatted, "options": {"wait_for_model": True}}
         data = _hf_request(payload)
         # The inference API returns one embedding per input (list of floats) or dict with "embedding".
         parsed: List[List[float]] = []
@@ -234,7 +291,7 @@ def embed_texts(texts: List[str], batch: int = 8) -> List[List[float]]:
             vec = item.get("embedding") if isinstance(item, dict) else item
             if not isinstance(vec, list):
                 raise RuntimeError(f"Invalid embedding payload: {item}")
-            parsed.append([float(x) for x in vec])
+            parsed.append(l2_normalize([float(x) for x in vec]))
         if len(parsed) != len(subset):
             raise RuntimeError("Mismatch between inputs and embeddings from Hugging Face.")
         vectors.extend(parsed)
@@ -322,8 +379,8 @@ def main():
     ap.add_argument("--supabase-key", default=SUPABASE_SERVICE_KEY, help="Supabase service role key")
     ap.add_argument("--documents-table", default=DEFAULT_DOCUMENTS_TABLE, help="Supabase documents table")
     ap.add_argument("--chunks-table", default=DEFAULT_CHUNKS_TABLE, help="Supabase chunks table")
-    ap.add_argument("--chunk", type=int, default=900, help="Target chunk size (chars)")
-    ap.add_argument("--overlap", type=int, default=150, help="Chunk overlap (chars)")
+    ap.add_argument("--chunk", type=int, default=700, help="Target chunk size (chars)")
+    ap.add_argument("--overlap", type=int, default=220, help="Chunk overlap (chars)")
     ap.add_argument("--batch", type=int, default=32, help="Embedding batch size")
     ap.add_argument(
         "--skip-unchanged",
@@ -405,11 +462,14 @@ def main():
                     "source": base_id,
                     "filename": path.name,
                     "relpath": base_id,
+                    "section_title": title,
                     "len": len(ch),
                     "doc_fp": doc_fp,
                     "chunk_fp": fp,
                     "category": category,
                     "canonical": canonical,
+                    "embedder": EMBEDDER_ID,
+                    "document_id": document_id,
                 })
 
             if not chunks:
@@ -420,11 +480,12 @@ def main():
             if existed:
                 delete_existing_chunks(client, args.chunks_table, document_id)
 
-            embeddings = embed_texts(chunks, batch=args.batch)
             titles = [title] * len(chunks)
+            embeddings = embed_texts(chunks, titles=titles, batch=args.batch)
             metas_for_rows = []
-            for meta in metas:
-                metas_for_rows.append({**meta})
+            for idx, meta in enumerate(metas):
+                enriched = {**meta, "chunk_index": idx}
+                metas_for_rows.append(enriched)
 
             insert_chunks(
                 client,
