@@ -284,11 +284,22 @@ def l2_normalize(vec: List[float]) -> List[float]:
 
 def _format_for_embedding(text: str, title: Optional[str]) -> str:
     """
-    Return raw text for embedding (no title prefix).
-    This ensures clean semantic matching between queries and chunks.
-    Title info is preserved in metadata for citations.
+    Return cleaned text for embedding (no title prefix, no URLs).
+
+    Strips URLs to reduce noise in embeddings while preserving semantic content.
+    URLs dilute embedding quality (seen 35-62% URL ratio in some chunks).
+
+    Note: URLs are preserved in stored chunk content for citations.
+    Only embedding text is cleaned.
     """
-    return text
+    # Strip URLs - they add noise but no semantic value
+    # Keeps: "Visit HART online" but removes: "https://www.hart.org/..."
+    cleaned = re.sub(r'https?://\S+', '', text)
+    # Remove markdown link syntax that remains after URL removal
+    cleaned = re.sub(r'\[([^\]]+)\]\(\)', r'\1', cleaned)
+    # Clean up extra whitespace
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
 
 def iter_md_files(root: Path) -> Iterable[Path]:
     for p in sorted(root.rglob("*.md")):
@@ -323,6 +334,8 @@ def embed_texts(texts: List[str], titles: Optional[List[str]] = None, batch: int
             title = None
             if titles and (i + j) < len(titles):
                 title = titles[i + j]
+            # Format chunk for embedding (strips URLs for cleaner embeddings)
+            # Original chunk text (with URLs) is preserved in 'subset' for storage
             formatted.append(_format_for_embedding(chunk, title))
         payload = {"inputs": formatted, "options": {"wait_for_model": True}}
         data = _hf_request(payload)
@@ -393,7 +406,7 @@ def insert_chunks(
             "id": str(uuid.uuid4()),
             "document_id": document_id,
             "chunk_index": idx,
-            "content": content,
+            "content": content,  # Original text with URLs intact (for citations)
             "section_title": title,
             "metadata": meta,
             "embedding": embed,

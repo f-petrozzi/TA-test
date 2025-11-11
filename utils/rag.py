@@ -31,8 +31,9 @@ AZURE_ORCHESTRATOR_DEPLOYMENT = os.getenv("AZURE_PHI4_ORCHESTRATOR") or os.geten
 
 SUPABASE_MATCH_FUNCTION = os.getenv("SUPABASE_MATCH_FUNCTION", "match_document_chunks")
 SUPABASE_DEFAULT_MATCH_COUNT = int(os.getenv("SUPABASE_MATCH_COUNT", "10"))
-# Increased from 30 to 50 - wider funnel catches more relevant docs before reranking
-SUPABASE_INITIAL_MATCH_COUNT = int(os.getenv("SUPABASE_INITIAL_MATCH_COUNT", "50"))
+# Increased to 100 - transportation chunks score ~0.40 but compete with residency docs at 0.42-0.54
+# Wider funnel ensures relevant chunks make it to reranking stage
+SUPABASE_INITIAL_MATCH_COUNT = int(os.getenv("SUPABASE_INITIAL_MATCH_COUNT", "100"))
 SUPABASE_CHUNKS_TABLE = os.getenv("SUPABASE_CHUNKS_TABLE", "chunks")
 CROSS_ENCODER_MODEL = os.getenv("CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 CONTEXT_MAX_SNIPPETS = int(os.getenv("RAG_CONTEXT_SNIPPETS", "10"))
