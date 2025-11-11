@@ -618,6 +618,12 @@ async def run_mcp_server(
         )
 
 class SimpleMCPClient:
+    """
+    MCP client with persistent session for performance.
+
+    Maintains a single subprocess and MCP session across multiple tool calls,
+    eliminating the overhead of spawning a new process for each call.
+    """
 
     def __init__(
         self,
@@ -649,36 +655,105 @@ class SimpleMCPClient:
             cwd=str(self._server_cwd),
         )
 
-    # internal helpers
-    def _call_tool(self, tool_name: str, arguments: dict[str, Any]):
+        # Persistent session state
+        self._session: Optional[ClientSession] = None
+        self._client_context = None
+        self._session_initialized = False
+
+    def _ensure_session(self) -> ClientSession:
+        """
+        Lazy-initialize persistent MCP session.
+        Spawns subprocess and initializes session only once.
+        """
+        if self._session is not None and self._session_initialized:
+            return self._session
+
         if not self._stdio_params:
             raise RuntimeError("MCP transport has not been initialised.")
-        assert anyio is not None
+
+        async def _start_session():
+            # Start stdio client (spawns subprocess)
+            self._client_context = stdio_client(self._stdio_params)
+            read_stream, write_stream = await self._client_context.__aenter__()
+
+            # Start MCP session
+            self._session = ClientSession(read_stream, write_stream)
+            await self._session.__aenter__(None, None, None)
+
+            # Initialize MCP protocol
+            await self._session.initialize()
+
+            self._session_initialized = True
+            return self._session
+
+        self._session = anyio.run(_start_session)
+        return self._session
+
+    def _call_tool(self, tool_name: str, arguments: dict[str, Any]):
+        """Call MCP tool using persistent session."""
+        session = self._ensure_session()
 
         async def _call():
-            async with stdio_client(self._stdio_params) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    await session.list_tools()
-                    return await session.call_tool(tool_name, arguments)
+            return await session.call_tool(tool_name, arguments)
 
-        result = anyio.run(_call)
+        try:
+            result = anyio.run(_call)
+        except Exception as exc:
+            # Session might be dead, try to recover once
+            logger.warning("MCP session failed, attempting recovery: %s", exc)
+            self.close()
+            session = self._ensure_session()
+            result = anyio.run(_call)
+
         if result.isError:
             raise RuntimeError(_extract_error(result))
         return result
 
     @staticmethod
     def _structured(result, key: str, default: Any):
+        """Extract structured data from MCP result."""
         data = result.structuredContent or {}
         return data.get(key, default)
 
-    # public API used by the Streamlit app
+    def close(self):
+        """Close MCP session and cleanup resources."""
+        if not self._session_initialized:
+            return
+
+        async def _cleanup():
+            try:
+                if self._session:
+                    await self._session.__aexit__(None, None, None)
+            except Exception as exc:
+                logger.warning("Error closing MCP session: %s", exc)
+
+            try:
+                if self._client_context:
+                    await self._client_context.__aexit__(None, None, None)
+            except Exception as exc:
+                logger.warning("Error closing MCP client: %s", exc)
+
+        try:
+            anyio.run(_cleanup)
+        except Exception as exc:
+            logger.warning("Error during MCP cleanup: %s", exc)
+        finally:
+            self._session = None
+            self._client_context = None
+            self._session_initialized = False
+
+    def __del__(self):
+        """Cleanup on garbage collection."""
+        self.close()
+
+    # Public API - all methods use real MCP protocol via persistent session
     def retrieve_context(
         self,
         query: str,
         match_count: Optional[int] = None,
         extra_filter: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
+        """Retrieve context via MCP retrieve_context tool."""
         if not query:
             raise ValueError("query is required")
         payload = {"query": query}
@@ -686,29 +761,28 @@ class SimpleMCPClient:
             payload["match_count"] = match_count
         if extra_filter:
             payload["extra_filter"] = extra_filter
-        try:
-            result = self._call_tool("retrieve_context", payload)
-            return self._structured(result, "hits", [])
-        except Exception as exc:  # pragma: no cover - fallback safety
-            logger.warning("Falling back to direct context retrieval: %s", exc)
-        return self._runtime.retrieve_context(query, match_count=match_count, extra_filter=extra_filter)
+        result = self._call_tool("retrieve_context", payload)
+        return self._structured(result, "hits", [])
 
     def log_interaction(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        """Log interaction via MCP log_interaction tool."""
+        if not session_id or not event_type:
+            return
         try:
             self._call_tool(
                 "log_interaction",
                 {"session_id": session_id, "event_type": event_type, "payload": payload},
             )
-            return
-        except Exception as exc:  # pragma: no cover - fallback safety
-            logger.warning("MCP log_interaction failed, using direct DB fallback: %s", exc)
-        self._runtime.log_interaction(session_id, event_type, payload)
+        except Exception as exc:
+            logger.warning("log_interaction failed: %s", exc)
 
     def list_calendar_events(self, max_results: int = 5) -> list[dict[str, Any]]:
+        """List calendar events via MCP list_calendar_events tool."""
         result = self._call_tool("list_calendar_events", {"max_results": max_results})
         return self._structured(result, "events", [])
 
     def list_recent_emails(self, query: str = "", max_results: int = 5) -> list[dict[str, str]]:
+        """List recent emails via MCP list_recent_emails tool."""
         result = self._call_tool(
             "list_recent_emails",
             {"query": query or "", "max_results": max_results},
@@ -716,6 +790,7 @@ class SimpleMCPClient:
         return self._structured(result, "messages", [])
 
     def send_email(self, to_address: str, subject: str, body: str) -> str:
+        """Send email via MCP send_email tool."""
         if not to_address or not subject or not body:
             raise ValueError("To, subject, and body are required to send email.")
         result = self._call_tool(
@@ -733,6 +808,7 @@ class SimpleMCPClient:
         previous_draft: str | None = None,
         session_id: str | None = None,
     ) -> dict[str, Any]:
+        """Draft email via MCP draft_email tool."""
         payload = {"student_message": student_message}
         if subject is not None:
             payload["subject"] = subject
@@ -753,7 +829,8 @@ class SimpleMCPClient:
         attendees: Optional[list[str]] = None,
         description: str = "",
         location: str = "",
-    ) -> str:
+    ) -> dict[str, str]:
+        """Create calendar event via MCP create_event tool."""
         payload = {
             "summary": summary,
             "start_iso": start_iso,
@@ -762,22 +839,11 @@ class SimpleMCPClient:
             "description": description,
             "location": location,
         }
-        try:
-            result = self._call_tool("create_event", payload)
-            return {
-                "event_id": self._structured(result, "event_id", ""),
-                "hangout_link": self._structured(result, "hangout_link", ""),
-            }
-        except Exception as exc:  # pragma: no cover - fallback safety
-            logger.warning("MCP create_event failed, using direct Google fallback: %s", exc)
-            return self._runtime.create_event(
-                summary,
-                start_iso,
-                duration_minutes,
-                attendees=attendees,
-                description=description,
-                location=location,
-            )
+        result = self._call_tool("create_event", payload)
+        return {
+            "event_id": self._structured(result, "event_id", ""),
+            "hangout_link": self._structured(result, "hangout_link", ""),
+        }
 
     def plan_meeting(
         self,
@@ -789,6 +855,7 @@ class SimpleMCPClient:
         location: str = "",
         session_id: str | None = None,
     ) -> dict[str, Any]:
+        """Plan meeting via MCP plan_meeting tool."""
         payload = {
             "summary": summary,
             "start_iso": start_iso,

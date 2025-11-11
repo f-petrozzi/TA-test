@@ -31,7 +31,8 @@ AZURE_ORCHESTRATOR_DEPLOYMENT = os.getenv("AZURE_PHI4_ORCHESTRATOR") or os.geten
 
 SUPABASE_MATCH_FUNCTION = os.getenv("SUPABASE_MATCH_FUNCTION", "match_document_chunks")
 SUPABASE_DEFAULT_MATCH_COUNT = int(os.getenv("SUPABASE_MATCH_COUNT", "10"))
-SUPABASE_INITIAL_MATCH_COUNT = int(os.getenv("SUPABASE_INITIAL_MATCH_COUNT", "60"))
+# Reduced from 60 to 30 - we only rerank top 12, so no need to fetch 60
+SUPABASE_INITIAL_MATCH_COUNT = int(os.getenv("SUPABASE_INITIAL_MATCH_COUNT", "30"))
 SUPABASE_CHUNKS_TABLE = os.getenv("SUPABASE_CHUNKS_TABLE", "chunks")
 CROSS_ENCODER_MODEL = os.getenv("CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 CONTEXT_MAX_SNIPPETS = int(os.getenv("RAG_CONTEXT_SNIPPETS", "10"))
@@ -70,7 +71,12 @@ def estimate_tokens(text: str) -> int:
         return 0
     return len(_WORD_OR_PUNC.findall(str(text)))
 
-def embed_query(text: str) -> List[float]:
+@lru_cache(maxsize=128)
+def embed_query(text: str) -> tuple:
+    """
+    Embed query text using HuggingFace API with caching.
+    Returns tuple for hashability (lru_cache requirement).
+    """
     token = require_env(HUGGINGFACEHUB_API_TOKEN, "HUGGINGFACEHUB_API_TOKEN")
     model = require_env(HUGGINGFACE_MODEL, "HUGGINGFACE_EMBEDDING_MODEL")
     url = f"https://router.huggingface.co/hf-inference/models/{model}/pipeline/feature-extraction"
@@ -87,7 +93,8 @@ def embed_query(text: str) -> List[float]:
     if not isinstance(vec, list):
         raise RuntimeError(f"Invalid embedding payload: {first}")
     floats = [float(x) for x in vec]
-    return _l2_normalize(floats)
+    normalized = _l2_normalize(floats)
+    return tuple(normalized)  # Return tuple for hashability
 
 def _l2_normalize(vec: List[float]) -> List[float]:
     norm = math.sqrt(sum(x * x for x in vec))
@@ -110,12 +117,14 @@ def _rerank_hits(query: str, hits: List[Dict[str, Any]], top_k: int) -> List[Dic
     if not hits:
         return []
 
-    # Performance optimization: Only rerank top 20 candidates instead of all 60
+    # Performance optimization: Only rerank top 12 candidates instead of all 60
+    # Further reduced from 20 to 12 for ~40% faster reranking
     # This significantly speeds up response time while maintaining quality
-    candidates = hits[:min(20, len(hits))]
+    candidates = hits[:min(12, len(hits))]
 
     ce = _get_cross_encoder()
-    pairs = [(query, h.get("doc", "")[:1200]) for h in candidates]
+    # Truncate documents to 800 chars instead of 1200 for faster inference
+    pairs = [(query, h.get("doc", "")[:800]) for h in candidates]
     scores = ce.predict(pairs)
     ranked = sorted(zip(candidates, scores), key=lambda t: float(t[1]), reverse=True)
     reranked: List[Dict[str, Any]] = []
@@ -227,7 +236,7 @@ def retrieve_matches(
 ) -> List[Dict[str, Any]]:
     client = get_supabase_client()
     embedding_source = embedding_text if embedding_text is not None else query
-    embedding = embed_query(embedding_source)
+    embedding = list(embed_query(embedding_source))  # Convert tuple to list
     desired = match_count or SUPABASE_DEFAULT_MATCH_COUNT
     initial = max(initial_override or SUPABASE_INITIAL_MATCH_COUNT, desired)
     payload: Dict[str, Any] = {
