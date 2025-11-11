@@ -384,20 +384,6 @@ def _augment_query(user_text: str) -> str:
             "glo-bull beginnings",
         ])
 
-    # Transportation queries - boost signal for bus/travel content
-    transportation_terms = ["arriving", "travel", "get to", "transportation", "bus", "airport"]
-    location_terms = ["tampa", "florida", "outside"]
-    if (any(term in lowered for term in transportation_terms) and
-        any(term in lowered for term in location_terms)):
-        keywords.extend([
-            "bus transportation",
-            "RedCoach",
-            "FlixBus",
-            "Greyhound",
-            "airport shuttle",
-            "Tampa Bay Area",
-        ])
-
     if keywords:
         dedup = []
         seen = set()
