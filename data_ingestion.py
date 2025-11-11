@@ -334,6 +334,8 @@ def embed_texts(texts: List[str], titles: Optional[List[str]] = None, batch: int
             title = None
             if titles and (i + j) < len(titles):
                 title = titles[i + j]
+            # Format chunk for embedding (strips URLs for cleaner embeddings)
+            # Original chunk text (with URLs) is preserved in 'subset' for storage
             formatted.append(_format_for_embedding(chunk, title))
         payload = {"inputs": formatted, "options": {"wait_for_model": True}}
         data = _hf_request(payload)
@@ -404,7 +406,7 @@ def insert_chunks(
             "id": str(uuid.uuid4()),
             "document_id": document_id,
             "chunk_index": idx,
-            "content": content,
+            "content": content,  # Original text with URLs intact (for citations)
             "section_title": title,
             "metadata": meta,
             "embedding": embed,
