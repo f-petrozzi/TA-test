@@ -43,7 +43,7 @@ def main():
     print("-" * 80)
 
     resp = client.table('chunks').select(
-        'id, chunk_index, content, embedding, section_title, filename, metadata, document_id'
+        'id, chunk_index, content, embedding, section_title, metadata, document_id'
     ).ilike('content', '%Arriving to Florida Outside of the Tampa Bay Area%').limit(3).execute()
 
     if not resp.data:
@@ -54,11 +54,12 @@ def main():
     print(f"✅ Found {len(resp.data)} matching chunk(s)")
 
     for chunk in resp.data:
+        metadata = chunk.get('metadata') or {}
         print(f"\n📄 Chunk ID: {chunk['id']}")
         print(f"   Document ID: {chunk['document_id']}")
         print(f"   Chunk Index: {chunk['chunk_index']}")
         print(f"   Section: {chunk.get('section_title', 'N/A')}")
-        print(f"   Filename: {chunk.get('filename', chunk.get('metadata', {}).get('filename', 'N/A'))}")
+        print(f"   Filename: {metadata.get('filename', 'N/A')}")
         print(f"   Content preview: {chunk['content'][:150]}...")
 
         # Step 2: Check if chunk has embedding
