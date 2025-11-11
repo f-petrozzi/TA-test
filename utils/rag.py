@@ -237,10 +237,9 @@ def retrieve_matches(
     client = get_supabase_client()
     embedding_source = embedding_text if embedding_text is not None else query
 
-    # Match ingestion format: "title: none | text: {query}"
-    # This ensures query embeddings match chunk embeddings for better retrieval
-    formatted_query = f"title: none | text: {embedding_source}"
-    embedding = list(embed_query(formatted_query))  # Convert tuple to list
+    # Use clean embeddings (no title prefix) for better semantic matching
+    # This matches the updated ingestion format for consistent retrieval
+    embedding = list(embed_query(embedding_source))  # Convert tuple to list
 
     desired = match_count or SUPABASE_DEFAULT_MATCH_COUNT
     initial = max(initial_override or SUPABASE_INITIAL_MATCH_COUNT, desired)

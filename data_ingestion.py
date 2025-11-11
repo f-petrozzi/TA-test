@@ -283,9 +283,12 @@ def l2_normalize(vec: List[float]) -> List[float]:
 
 
 def _format_for_embedding(text: str, title: Optional[str]) -> str:
-    """Mirror the Chroma ingestion format for consistency."""
-    normalized_title = (title or "").strip() or "none"
-    return f"title: {normalized_title} | text: {text}"
+    """
+    Return raw text for embedding (no title prefix).
+    This ensures clean semantic matching between queries and chunks.
+    Title info is preserved in metadata for citations.
+    """
+    return text
 
 def iter_md_files(root: Path) -> Iterable[Path]:
     for p in sorted(root.rglob("*.md")):
