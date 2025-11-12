@@ -79,13 +79,13 @@ def render_email_builder(mcp_client, db) -> None:
         # Only show interactive buttons when NOT processing
         if not st.session_state.get("is_processing", False):
             if col_generate.button("Generate Draft", key="btn_email_generate", use_container_width=True):
-                start_email_draft(
-                    mcp_client,
-                    db,
-                    st.session_state.email_to_input,
-                    st.session_state.email_subject_input,
-                    st.session_state.email_student_message,
-                )
+                # Two-phase: Phase 1 - set pending state and trigger rerun
+                st.session_state.pending_email_draft = {
+                    "to": st.session_state.email_to_input,
+                    "subject": st.session_state.email_subject_input,
+                    "message": st.session_state.email_student_message,
+                }
+                st.session_state.is_processing = True
                 st.rerun()
 
             if col_reset.button("Reset Fields", key="btn_email_reset", use_container_width=True):
@@ -115,7 +115,11 @@ def render_email_builder(mcp_client, db) -> None:
         # Only show interactive buttons when NOT processing
         if not st.session_state.get("is_processing", False):
             if col1.button("Apply AI Edit", key="btn_email_ai_edit"):
-                apply_email_edit(mcp_client, db, st.session_state.email_edit_instructions)
+                # Two-phase: Phase 1 - set pending state and trigger rerun
+                st.session_state.pending_email_edit = {
+                    "instructions": st.session_state.email_edit_instructions,
+                }
+                st.session_state.is_processing = True
                 st.rerun()
 
             if col2.button("Save Manual Edit", key="btn_email_manual_edit"):
@@ -176,21 +180,21 @@ def render_meeting_builder(mcp_client, db) -> None:
         # Only show interactive buttons when NOT processing
         if not st.session_state.get("is_processing", False):
             if col_check.button("Check Availability / Update Plan", key="btn_meeting_plan", use_container_width=True):
+                # Two-phase: Phase 1 - set pending state and trigger rerun
                 start_iso = build_start_iso(
                     st.session_state.meeting_date_input,
                     st.session_state.meeting_time_input,
                     st.session_state.meeting_timezone_input,
                 )
-                plan_meeting(
-                    mcp_client,
-                    db,
-                    st.session_state.meeting_summary_input,
-                    start_iso,
-                    int(st.session_state.meeting_duration_input),
-                    st.session_state.meeting_attendees_input,
-                    st.session_state.meeting_description_input,
-                    st.session_state.meeting_location_input,
-                )
+                st.session_state.pending_meeting_plan = {
+                    "summary": st.session_state.meeting_summary_input,
+                    "start_iso": start_iso,
+                    "duration": int(st.session_state.meeting_duration_input),
+                    "attendees": st.session_state.meeting_attendees_input,
+                    "description": st.session_state.meeting_description_input,
+                    "location": st.session_state.meeting_location_input,
+                }
+                st.session_state.is_processing = True
                 st.rerun()
 
             if col_reset.button("Reset Fields", key="btn_meeting_reset", use_container_width=True):
@@ -231,8 +235,11 @@ def render_meeting_builder(mcp_client, db) -> None:
         # Only show interactive buttons when NOT processing
         if not st.session_state.get("is_processing", False):
             if col1.button("Apply AI Edit", key="btn_meeting_ai_edit"):
-                from agents.meeting_assistant import apply_meeting_edit
-                apply_meeting_edit(mcp_client, db, st.session_state.meeting_edit_instructions)
+                # Two-phase: Phase 1 - set pending state and trigger rerun
+                st.session_state.pending_meeting_edit = {
+                    "instructions": st.session_state.meeting_edit_instructions,
+                }
+                st.session_state.is_processing = True
                 st.rerun()
 
             if col2.button("Save Manual Edit", key="btn_meeting_manual_edit"):

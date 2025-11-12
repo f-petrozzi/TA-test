@@ -38,6 +38,8 @@ def initialize_session_state() -> None:
 
     # Email assistant state
     st.session_state.setdefault("pending_email", None)
+    st.session_state.setdefault("pending_email_draft", None)  # For two-phase email draft generation
+    st.session_state.setdefault("pending_email_edit", None)  # For two-phase email AI edit
     st.session_state.setdefault("email_to_input", "")
     st.session_state.setdefault("email_subject_input", "")
     st.session_state.setdefault("email_student_message", "")
@@ -49,6 +51,8 @@ def initialize_session_state() -> None:
 
     # Meeting assistant state
     st.session_state.setdefault("pending_meeting", None)
+    st.session_state.setdefault("pending_meeting_plan", None)  # For two-phase meeting planning
+    st.session_state.setdefault("pending_meeting_edit", None)  # For two-phase meeting AI edit
     st.session_state.setdefault("meeting_summary_input", "")
     st.session_state.setdefault("meeting_duration_input", 30)
     st.session_state.setdefault("meeting_attendees_input", "")

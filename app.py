@@ -273,6 +273,26 @@ else:
             st.button("🏠 Dashboard", use_container_width=True, disabled=True)
             st.button("➕ New Chat", use_container_width=True, type="primary", disabled=True)
             st.text_input("🔍 Search sessions", key="search_input_disabled", disabled=True)
+
+            # Render sessions list with disabled buttons
+            sessions = db.get_user_sessions(st.session_state.user_id)
+            if sessions:
+                st.markdown(f"### 📁 Sessions ({len(sessions)})")
+                with st.container(height=435, border=True):
+                    for session in sessions:
+                        session_id = session.get("id")
+                        is_current = session_id == st.session_state.current_session_id
+                        button_type = "primary" if is_current else "secondary"
+                        st.button(
+                            f"💬 {session['session_name']}",
+                            key=f"session_{session_id}_disabled",
+                            use_container_width=True,
+                            type=button_type,
+                            disabled=True,
+                        )
+            else:
+                st.info("No sessions found")
+
             st.info("⏳ Processing... sidebar disabled")
 
     # Main Chat Area
@@ -480,24 +500,13 @@ else:
                         st.session_state.show_tool_picker = True
                     st.rerun()
             else:
-                # Show disabled button when processing
-                st.markdown(
-                    f"""
-                    <div style="
-                        background-color: #f0f2f6;
-                        border: 1px solid #dfe1e6;
-                        border-radius: 0.5rem;
-                        padding: 0.5rem;
-                        text-align: center;
-                        color: #a0a0a0;
-                        cursor: not-allowed;
-                        height: 38px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                    ">{tool_button_label}</div>
-                    """,
-                    unsafe_allow_html=True
+                # Show disabled button when processing - uses native Streamlit styling
+                st.button(
+                    tool_button_label,
+                    key="chat_tool_toggle_disabled",
+                    help="Processing...",
+                    use_container_width=True,
+                    disabled=True,
                 )
 
         with input_col:
@@ -509,25 +518,13 @@ else:
                     "Please open a new session to continue."
                 )
             elif st.session_state.is_processing:
-                # Show a disabled/visual-only input when processing (matches real chat input)
-                st.markdown(
-                    """
-                    <div style="
-                        background-color: #f8f9fa;
-                        border: 1px solid #dfe1e6;
-                        border-radius: 1.5rem;
-                        padding: 0.5rem 1rem;
-                        height: 38px;
-                        color: #a0a0a0;
-                        cursor: not-allowed;
-                        font-family: 'Source Sans Pro', sans-serif;
-                        display: flex;
-                        align-items: center;
-                        box-sizing: border-box;
-                        margin-left: 0.5rem;
-                    ">Ask the USF Campus Concierge...</div>
-                    """,
-                    unsafe_allow_html=True
+                # Show disabled text input when processing - uses native Streamlit styling
+                st.text_input(
+                    "chat_input_label",
+                    value="Ask the USF Campus Concierge...",
+                    key="chat_input_disabled",
+                    disabled=True,
+                    label_visibility="collapsed",
                 )
             else:
                 # Only render interactive chat input when NOT processing
@@ -607,6 +604,53 @@ else:
             st.session_state.is_processing = False
             st.rerun()
 
+        # Handle email draft generation - TWO PHASE APPROACH
+        # Phase 2: Process the pending email draft (UI already showing disabled state)
+        if st.session_state.is_processing and st.session_state.get("pending_email_draft"):
+            from agents.email_assistant import start_email_draft
+            params = st.session_state.pending_email_draft
+            start_email_draft(mcp_client, db, params["to"], params["subject"], params["message"])
+            st.session_state.pending_email_draft = None
+            st.session_state.is_processing = False
+            st.rerun()
+
+        # Handle email AI edit - TWO PHASE APPROACH
+        # Phase 2: Process the pending email edit (UI already showing disabled state)
+        if st.session_state.is_processing and st.session_state.get("pending_email_edit"):
+            from agents.email_assistant import apply_email_edit
+            params = st.session_state.pending_email_edit
+            apply_email_edit(mcp_client, db, params["instructions"])
+            st.session_state.pending_email_edit = None
+            st.session_state.is_processing = False
+            st.rerun()
+
+        # Handle meeting planning - TWO PHASE APPROACH
+        # Phase 2: Process the pending meeting plan (UI already showing disabled state)
+        if st.session_state.is_processing and st.session_state.get("pending_meeting_plan"):
+            from agents.meeting_assistant import plan_meeting
+            params = st.session_state.pending_meeting_plan
+            plan_meeting(
+                mcp_client, db,
+                params["summary"],
+                params["start_iso"],
+                params["duration"],
+                params["attendees"],
+                params["description"],
+                params["location"],
+            )
+            st.session_state.pending_meeting_plan = None
+            st.session_state.is_processing = False
+            st.rerun()
+
+        # Handle meeting AI edit - TWO PHASE APPROACH
+        # Phase 2: Process the pending meeting edit (UI already showing disabled state)
+        if st.session_state.is_processing and st.session_state.get("pending_meeting_edit"):
+            from agents.meeting_assistant import apply_meeting_edit
+            params = st.session_state.pending_meeting_edit
+            apply_meeting_edit(mcp_client, db, params["instructions"])
+            st.session_state.pending_meeting_edit = None
+            st.session_state.is_processing = False
+            st.rerun()
 
         # Handle user input - TWO PHASE APPROACH
         # Phase 1: User submits → set flag and rerun (UI updates instantly)
