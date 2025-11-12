@@ -21,8 +21,8 @@ os.environ.setdefault("TRANSFORMERS_NO_JAX", "1")
 from utils.database import ChatDatabase
 from utils.rag import generate_with_rag, estimate_tokens
 from utils.security import sanitize_user_input, is_injection, AuthManager
-from utils.mcp import SimpleMCPClient
-from utils.google_tools import GoogleWorkspaceTools
+from agents.mcp import SimpleMCPClient
+from tools.google_tools import GoogleWorkspaceTools
 from utils.streaming import SmoothStreamer
 from utils.ui_helpers import inject_global_styles, scroll_chat_to_bottom
 from utils.session_manager import (

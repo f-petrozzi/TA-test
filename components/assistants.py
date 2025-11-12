@@ -2,13 +2,13 @@
 import streamlit as st
 from datetime import date, datetime
 from utils.formatters import MEETING_TIMEZONE_OFFSETS, build_start_iso
-from utils.email_assistant import (
+from agents.email_assistant import (
     start_email_draft,
     apply_email_edit,
     save_manual_email_edit,
     send_email_draft,
 )
-from utils.meeting_assistant import plan_meeting, create_meeting_event
+from agents.meeting_assistant import plan_meeting, create_meeting_event
 
 
 def render_tool_picker() -> None:
@@ -212,12 +212,12 @@ def render_meeting_builder(mcp_client, db) -> None:
         col1, col2, col3, col4 = st.columns(4)
 
         if col1.button("Apply AI Edit", key="btn_meeting_ai_edit"):
-            from utils.meeting_assistant import apply_meeting_edit
+            from agents.meeting_assistant import apply_meeting_edit
             apply_meeting_edit(mcp_client, db, st.session_state.meeting_edit_instructions)
             st.rerun()
 
         if col2.button("Save Manual Edit", key="btn_meeting_manual_edit"):
-            from utils.meeting_assistant import save_manual_meeting_edit
+            from agents.meeting_assistant import save_manual_meeting_edit
             if save_manual_meeting_edit(st.session_state.meeting_notes_text):
                 st.success("Meeting notes updated.")
 

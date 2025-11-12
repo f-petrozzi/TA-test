@@ -16,7 +16,7 @@ except ImportError:
 from dotenv import load_dotenv
 
 from utils.database import ChatDatabase
-from utils.google_tools import GoogleWorkspaceTools
+from tools.google_tools import GoogleWorkspaceTools
 from utils.rag import retrieve_matches, format_context, build_sources_block
 from utils.azure_llm import complete_chat
 
@@ -47,7 +47,7 @@ load_dotenv()
 _PYTHON_BIN = sys.executable or "python3"
 SERVER_NAME = "usf_workspace_tools"
 SERVER_VERSION = "1.0.0"
-DEFAULT_SERVER_CMD = [_PYTHON_BIN, "-m", "utils.mcp", "serve"]
+DEFAULT_SERVER_CMD = [_PYTHON_BIN, "-m", "agents.mcp", "serve"]
 DEFAULT_SERVER_CWD = Path(__file__).resolve().parents[1]
 
 PHI4_EMAIL_DEPLOYMENT = os.getenv("AZURE_PHI4_EMAIL") or os.getenv("AZURE_PHI4_ORCHESTRATOR") or os.getenv("AZURE_OPENAI_DEPLOYMENT")
