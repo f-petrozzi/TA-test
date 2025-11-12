@@ -4,7 +4,7 @@ from typing import Any, Optional
 from utils.formatters import split_subject_from_body
 from utils.rag import estimate_tokens
 from utils.state_manager import queue_action_collapse
-from utils.google_tools import GoogleWorkspaceError
+from tools.google_tools import GoogleWorkspaceError
 
 
 def draft_email_via_mcp(
