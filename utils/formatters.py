@@ -8,10 +8,10 @@ UTC = ZoneInfo("UTC")
 EASTERN = ZoneInfo("America/New_York")
 
 MEETING_TIMEZONE_OFFSETS = {
-    "US/Eastern (ET)": "-04:00",
-    "US/Central (CT)": "-05:00",
-    "US/Mountain (MT)": "-06:00",
-    "US/Pacific (PT)": "-07:00",
+    "US/Eastern (EST)": "-05:00",
+    "US/Central (CST)": "-06:00",
+    "US/Mountain (MST)": "-07:00",
+    "US/Pacific (PST)": "-08:00",
 }
 
 _SUBJECT_PREFIX = re.compile(

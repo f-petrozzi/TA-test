@@ -56,7 +56,7 @@ def initialize_session_state() -> None:
     st.session_state.setdefault("meeting_attendees_input", "")
     st.session_state.setdefault("meeting_description_input", "")
     st.session_state.setdefault("meeting_location_input", "")
-    st.session_state.setdefault("meeting_timezone_input", "US/Eastern (ET)")
+    st.session_state.setdefault("meeting_timezone_input", "US/Eastern (EST)")
     st.session_state.setdefault("meeting_date_input", date.today())
     st.session_state.setdefault(
         "meeting_time_input",
