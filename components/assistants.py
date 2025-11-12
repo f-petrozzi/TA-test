@@ -86,6 +86,8 @@ def render_email_builder(mcp_client, db) -> None:
                     "message": st.session_state.email_student_message,
                 }
                 st.session_state.is_processing = True
+                # Close email builder to prevent grayed-out appearance
+                st.session_state.show_email_builder = False
                 st.rerun()
 
             if col_reset.button("Reset Fields", key="btn_email_reset", use_container_width=True):
@@ -120,6 +122,8 @@ def render_email_builder(mcp_client, db) -> None:
                     "instructions": st.session_state.email_edit_instructions,
                 }
                 st.session_state.is_processing = True
+                # Close email builder to prevent grayed-out appearance
+                st.session_state.show_email_builder = False
                 st.rerun()
 
             if col2.button("Save Manual Edit", key="btn_email_manual_edit"):
@@ -195,6 +199,8 @@ def render_meeting_builder(mcp_client, db) -> None:
                     "location": st.session_state.meeting_location_input,
                 }
                 st.session_state.is_processing = True
+                # Close meeting builder to prevent grayed-out appearance
+                st.session_state.show_meeting_builder = False
                 st.rerun()
 
             if col_reset.button("Reset Fields", key="btn_meeting_reset", use_container_width=True):
@@ -240,6 +246,8 @@ def render_meeting_builder(mcp_client, db) -> None:
                     "instructions": st.session_state.meeting_edit_instructions,
                 }
                 st.session_state.is_processing = True
+                # Close meeting builder to prevent grayed-out appearance
+                st.session_state.show_meeting_builder = False
                 st.rerun()
 
             if col2.button("Save Manual Edit", key="btn_meeting_manual_edit"):

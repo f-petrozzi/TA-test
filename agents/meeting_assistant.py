@@ -52,7 +52,6 @@ def plan_meeting(
     # Sync AI notes to editable text area
     if plan.get("ai_notes"):
         st.session_state.meeting_notes_sync_value = plan["ai_notes"]
-        assistant_msg = plan["ai_notes"]
     elif slot_free:
         assistant_msg = f"The {duration}-minute slot starting {start_iso} is free. Use Create Event when ready."
         st.session_state.meeting_notes_sync_value = assistant_msg
@@ -61,20 +60,8 @@ def plan_meeting(
         assistant_msg = "The requested slot is busy." + suggestion_text
         st.session_state.meeting_notes_sync_value = assistant_msg
 
-    with st.chat_message("assistant"):
-        if slot_free:
-            st.success(assistant_msg)
-        else:
-            st.warning(assistant_msg)
-
-    out_toks = estimate_tokens(assistant_msg)
-    st.session_state.messages.append({"role": "assistant", "content": assistant_msg})
-    db.add_message(
-        st.session_state.current_session_id,
-        "assistant",
-        assistant_msg,
-        tokens_out=out_toks,
-    )
+    # Don't add to chat history - editable plan will be shown in assistant UI
+    # Log interaction but don't show message in chat
     mcp_client.log_interaction(
         st.session_state.current_session_id,
         "meeting_plan",
@@ -88,7 +75,7 @@ def plan_meeting(
             "suggested": suggested,
         },
     )
-    st.session_state.token_total += out_toks
+    st.session_state.show_meeting_builder = True
 
 
 def create_meeting_event(mcp_client, db) -> None:
