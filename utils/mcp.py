@@ -186,8 +186,7 @@ class _ToolRuntime:
             subject_line = extracted_subject
             body = cleaned_body
         sources = build_sources_block(hits)
-        if sources and "**Sources**" not in body:
-            body = f"{body}\n\n**Sources**\n{sources}"
+        # Keep body and sources separate - sources shown in chat but not in draft box
         draft = {
             "subject": subject_line,
             "body": body,

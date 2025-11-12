@@ -421,12 +421,16 @@ else:
                     f"({st.session_state.token_total}/{SESSION_TOKEN_LIMIT}). "
                     "Please open a new session to continue."
                 )
+            elif st.session_state.is_processing:
+                st.info("🤔 Thinking...")
+                user_input = None
             else:
                 user_input = st.chat_input("Ask the USF Campus Concierge...")
 
             # Handle regeneration
             if st.session_state.pending_regen and st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
                 st.session_state.pending_regen = False
+                st.session_state.is_processing = True
                 last_user = st.session_state.messages[-1]["content"]
 
                 with chat_col:
@@ -468,10 +472,12 @@ else:
                     {"query": last_user, "response": final_text, "chunks": matched_chunks},
                 )
                 maybe_auto_open_assistant(final_text)
+                st.session_state.is_processing = False
                 st.rerun()
 
         # Handle user input
         if user_input:
+            st.session_state.is_processing = True
             handle_pending_action_collapses()
             clean = sanitize_user_input(user_input)
             in_toks = estimate_tokens(clean)
@@ -510,6 +516,7 @@ else:
                     "injection_blocked",
                     {"prompt": clean, "response": warn},
                 )
+                st.session_state.is_processing = False
                 st.rerun()
 
             # Generate response with RAG
@@ -551,6 +558,7 @@ else:
                     error_msg,
                     tokens_out=estimate_tokens(error_msg),
                 )
+                st.session_state.is_processing = False
                 st.rerun()
 
             out_toks = estimate_tokens(final_text or "")
@@ -575,6 +583,7 @@ else:
                 },
             )
             maybe_auto_open_assistant(final_text)
+            st.session_state.is_processing = False
             st.rerun()
 
     else:

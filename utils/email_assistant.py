@@ -66,6 +66,7 @@ def start_email_draft(mcp_client, db, to_addr: str, subject: str, student_msg: s
         return
 
     cleaned_draft = drafted.get("body", "")
+    sources = drafted.get("sources", "")
     matched_chunks = drafted.get("context_hits", [])
     inline_subject, cleaned_draft = split_subject_from_body(cleaned_draft)
     subject = drafted.get("subject") or inline_subject or subject
@@ -73,12 +74,17 @@ def start_email_draft(mcp_client, db, to_addr: str, subject: str, student_msg: s
     if subject:
         st.session_state.email_subject_sync_value = subject
 
-    out_toks = estimate_tokens(cleaned_draft)
-    st.session_state.messages.append({"role": "assistant", "content": cleaned_draft})
+    # Show sources in chat history but not in draft box
+    chat_content = cleaned_draft
+    if sources:
+        chat_content = f"{cleaned_draft}\n\n**Sources**\n{sources}"
+
+    out_toks = estimate_tokens(chat_content)
+    st.session_state.messages.append({"role": "assistant", "content": chat_content})
     db.add_message(
         st.session_state.current_session_id,
         "assistant",
-        cleaned_draft,
+        chat_content,
         tokens_out=out_toks,
     )
     mcp_client.log_interaction(
@@ -127,6 +133,7 @@ def apply_email_edit(mcp_client, db, instructions: str) -> None:
         return
 
     revised = drafted.get("body", pending.get("body", ""))
+    sources = drafted.get("sources", "")
     inline_subject, revised = split_subject_from_body(revised)
     new_subject = drafted.get("subject") or inline_subject
 
@@ -134,12 +141,17 @@ def apply_email_edit(mcp_client, db, instructions: str) -> None:
         pending["subject"] = new_subject
         st.session_state.email_subject_sync_value = new_subject
 
-    out_toks = estimate_tokens(revised)
-    st.session_state.messages.append({"role": "assistant", "content": revised})
+    # Show sources in chat history but not in draft box
+    chat_content = revised
+    if sources:
+        chat_content = f"{revised}\n\n**Sources**\n{sources}"
+
+    out_toks = estimate_tokens(chat_content)
+    st.session_state.messages.append({"role": "assistant", "content": chat_content})
     db.add_message(
         st.session_state.current_session_id,
         "assistant",
-        revised,
+        chat_content,
         tokens_out=out_toks,
     )
     mcp_client.log_interaction(

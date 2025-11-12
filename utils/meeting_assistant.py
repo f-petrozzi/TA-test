@@ -49,13 +49,17 @@ def plan_meeting(
     start_iso = plan.get("start", start_raw)
     suggested = plan.get("suggested")
 
+    # Sync AI notes to editable text area
     if plan.get("ai_notes"):
+        st.session_state.meeting_notes_sync_value = plan["ai_notes"]
         assistant_msg = plan["ai_notes"]
     elif slot_free:
         assistant_msg = f"The {duration}-minute slot starting {start_iso} is free. Use Create Event when ready."
+        st.session_state.meeting_notes_sync_value = assistant_msg
     else:
         suggestion_text = f" Suggested alternative: {suggested}" if suggested else ""
         assistant_msg = "The requested slot is busy." + suggestion_text
+        st.session_state.meeting_notes_sync_value = assistant_msg
 
     with st.chat_message("assistant"):
         if slot_free:
@@ -94,13 +98,16 @@ def create_meeting_event(mcp_client, db) -> None:
         st.warning("No meeting plan to create. Check availability first.")
         return
 
+    # Use edited meeting notes if available
+    description = st.session_state.meeting_notes_text or plan.get("description", "")
+
     try:
         event_info = mcp_client.create_event(
             plan["summary"],
             plan["start"],
             plan["duration"],
             attendees=plan.get("attendees"),
-            description=plan.get("description", ""),
+            description=description,
             location=plan.get("location", ""),
         )
     except RuntimeError as e:
@@ -150,3 +157,80 @@ def create_meeting_event(mcp_client, db) -> None:
 
     queue_action_collapse("meeting", meeting_action)
     st.session_state.pending_meeting = None
+    st.session_state.meeting_notes_text = ""
+    st.session_state.meeting_notes_sync_value = None
+
+
+def apply_meeting_edit(mcp_client, db, instructions: str) -> None:
+    """Apply AI-powered edits to meeting notes."""
+    plan = st.session_state.pending_meeting
+    if not plan:
+        st.warning("No meeting plan available. Generate a plan first.")
+        return
+
+    instructions = (instructions or "").strip()
+    if not instructions:
+        st.warning("Enter edit instructions before applying an AI edit.")
+        return
+
+    # Use mcp_client to regenerate meeting notes with instructions
+    current_notes = st.session_state.meeting_notes_text or plan.get("ai_notes", "")
+
+    with st.chat_message("assistant"):
+        st.markdown("✏️ Updating meeting notes …")
+        try:
+            # Re-plan meeting with edit instructions
+            updated_plan = mcp_client.plan_meeting(
+                plan.get("summary", ""),
+                plan.get("start", ""),
+                plan.get("duration", 30),
+                attendees=plan.get("attendees"),
+                agenda=f"{current_notes}\n\nEdit instructions: {instructions}",
+                location=plan.get("location", ""),
+                session_id=st.session_state.current_session_id,
+            )
+
+            if updated_plan and updated_plan.get("ai_notes"):
+                revised_notes = updated_plan["ai_notes"]
+                st.markdown(revised_notes)
+            else:
+                st.warning("Could not generate updated notes.")
+                return
+        except RuntimeError as e:
+            st.error(f"Failed to update notes: {e}")
+            return
+
+    # Update plan and sync to text area
+    plan["ai_notes"] = revised_notes
+    plan["description"] = revised_notes
+    st.session_state.pending_meeting = plan
+    st.session_state.meeting_notes_sync_value = revised_notes
+
+    out_toks = estimate_tokens(revised_notes)
+    st.session_state.messages.append({"role": "assistant", "content": revised_notes})
+    db.add_message(
+        st.session_state.current_session_id,
+        "assistant",
+        revised_notes,
+        tokens_out=out_toks,
+    )
+    mcp_client.log_interaction(
+        st.session_state.current_session_id,
+        "meeting_edit",
+        {"instructions": instructions, "notes": revised_notes},
+    )
+    st.session_state.token_total += out_toks
+
+
+def save_manual_meeting_edit(text: str) -> bool:
+    """Save manual edits to meeting notes."""
+    plan = st.session_state.pending_meeting
+    if not plan:
+        st.warning("No meeting plan to update.")
+        return False
+
+    plan["description"] = text
+    plan["ai_notes"] = text
+    st.session_state.pending_meeting = plan
+    st.session_state.meeting_notes_sync_value = None
+    return True
