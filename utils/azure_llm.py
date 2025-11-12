@@ -2,7 +2,7 @@ import os
 from functools import lru_cache
 from typing import Generator, List, Dict, Any
 
-from openai import AzureOpenAI, OpenAI, NotFoundError
+from openai import AzureOpenAI, OpenAI, NotFoundError, BadRequestError
 
 
 DEFAULT_AZURE_OPENAI_API_VERSION = "2024-02-15-preview"
@@ -78,6 +78,31 @@ def stream_chat(
             stream=True,
             timeout=timeout,
         )
+    except BadRequestError as exc:
+        # Check if this is a content filter violation (jailbreak attempt)
+        error_body = getattr(exc, 'body', {}) or {}
+        error_detail = error_body.get('error', {})
+        error_code = error_detail.get('code', '')
+
+        if error_code == 'content_filter':
+            inner_error = error_detail.get('innererror', {})
+            filter_result = inner_error.get('content_filter_result', {})
+
+            # Check what was filtered
+            if filter_result.get('jailbreak', {}).get('filtered'):
+                raise RuntimeError(
+                    "This request was blocked by Azure's content safety filters. "
+                    "It appears to be attempting to bypass system instructions or extract sensitive prompts. "
+                    "Please rephrase your question to focus on the information you need."
+                ) from exc
+            else:
+                # Other content filter reasons (hate, self-harm, sexual, violence)
+                raise RuntimeError(
+                    "This request was blocked by Azure's content safety filters. "
+                    "Please rephrase your question in a way that complies with content policies."
+                ) from exc
+        # Re-raise other BadRequestErrors
+        raise
     except NotFoundError as exc:
         raise RuntimeError(
             f"Azure OpenAI deployment '{model}' was not found. "
@@ -118,6 +143,31 @@ def complete_chat(
             temperature=temperature,
             timeout=timeout,
         )
+    except BadRequestError as exc:
+        # Check if this is a content filter violation (jailbreak attempt)
+        error_body = getattr(exc, 'body', {}) or {}
+        error_detail = error_body.get('error', {})
+        error_code = error_detail.get('code', '')
+
+        if error_code == 'content_filter':
+            inner_error = error_detail.get('innererror', {})
+            filter_result = inner_error.get('content_filter_result', {})
+
+            # Check what was filtered
+            if filter_result.get('jailbreak', {}).get('filtered'):
+                raise RuntimeError(
+                    "This request was blocked by Azure's content safety filters. "
+                    "It appears to be attempting to bypass system instructions or extract sensitive prompts. "
+                    "Please rephrase your question to focus on the information you need."
+                ) from exc
+            else:
+                # Other content filter reasons (hate, self-harm, sexual, violence)
+                raise RuntimeError(
+                    "This request was blocked by Azure's content safety filters. "
+                    "Please rephrase your question in a way that complies with content policies."
+                ) from exc
+        # Re-raise other BadRequestErrors
+        raise
     except NotFoundError as exc:
         raise RuntimeError(
             f"Azure OpenAI deployment '{model}' was not found. "
