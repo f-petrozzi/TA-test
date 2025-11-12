@@ -16,8 +16,6 @@ def initialize_session_state() -> None:
         st.session_state.user_id = None
     if "username" not in st.session_state:
         st.session_state.username = None
-    if "session_token" not in st.session_state:
-        st.session_state.session_token = None
 
     # Chat session
     if "current_session_id" not in st.session_state:
