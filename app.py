@@ -199,7 +199,7 @@ else:
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.username}")
 
-        # Only render interactive sidebar buttons when NOT processing
+        # Only render interactive sidebar elements when NOT processing
         if not st.session_state.is_processing:
             if st.button("🚪 Logout", use_container_width=True):
                 # Clear session state
@@ -268,7 +268,11 @@ else:
             else:
                 st.info("No sessions found")
         else:
-            # Show disabled message when processing
+            # Show disabled buttons and message when processing
+            st.button("🚪 Logout", use_container_width=True, disabled=True)
+            st.button("🏠 Dashboard", use_container_width=True, disabled=True)
+            st.button("➕ New Chat", use_container_width=True, type="primary", disabled=True)
+            st.text_input("🔍 Search sessions", key="search_input_disabled", disabled=True)
             st.info("⏳ Processing... sidebar disabled")
 
     # Main Chat Area
@@ -453,7 +457,7 @@ else:
             or st.session_state.show_meeting_builder
         )
         tool_button_label = "×" if any_assistant_open else "＋"
-        toggle_col, input_col = st.columns([0.03, 0.97], gap="small")  # Add ~1rem gap
+        toggle_col, input_col = st.columns([0.03, 0.97], gap=None)  # No gap in columns
 
         # Block interactions by not rendering interactive elements when processing
         # This is the Streamlit-native way - much more reliable than overlays
@@ -486,7 +490,7 @@ else:
                         padding: 0.5rem;
                         text-align: center;
                         color: #a0a0a0;
-                        cursor: wait;
+                        cursor: not-allowed;
                         height: 38px;
                         display: flex;
                         align-items: center;
@@ -515,11 +519,12 @@ else:
                         padding: 0.5rem 1rem;
                         height: 38px;
                         color: #a0a0a0;
-                        cursor: wait;
+                        cursor: not-allowed;
                         font-family: 'Source Sans Pro', sans-serif;
                         display: flex;
                         align-items: center;
                         box-sizing: border-box;
+                        margin-left: 0.5rem;
                     ">Ask the USF Campus Concierge...</div>
                     """,
                     unsafe_allow_html=True
@@ -608,6 +613,10 @@ else:
         if user_input and not st.session_state.is_processing:
             st.session_state.pending_user_input = user_input
             st.session_state.is_processing = True
+            # Close all assistants when regular prompt is sent
+            st.session_state.show_tool_picker = False
+            st.session_state.show_email_builder = False
+            st.session_state.show_meeting_builder = False
             st.rerun()  # Critical: rerun NOW to update UI before processing
 
         # Phase 2: Process the pending input (UI already showing disabled state)
