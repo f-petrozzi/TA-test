@@ -406,7 +406,8 @@ else:
                     st.write(msg["content"])
 
             # Only show regenerate button for regular query responses, not email/meeting outputs
-            if history and history[-1]["role"] == "assistant":
+            # And only when not currently processing
+            if history and history[-1]["role"] == "assistant" and not st.session_state.is_processing:
                 # Check if this is a regular query response (not email/meeting related)
                 is_regular_query = not (
                     st.session_state.show_email_builder or
@@ -444,90 +445,73 @@ else:
         tool_button_label = "×" if any_assistant_open else "＋"
         toggle_col, input_col = st.columns([0.03, 0.97], gap=None)
 
-        # Full-screen overlay to block ALL interactions when processing
-        # Uses multiple techniques to ensure it works
-        if st.session_state.is_processing:
-            st.markdown(
-                """
-                <style>
-                /* Disable pointer events on all Streamlit elements when processing */
-                .processing-overlay ~ div button,
-                .processing-overlay ~ div input,
-                .processing-overlay ~ div textarea,
-                .processing-overlay ~ div [data-testid],
-                .processing-overlay ~ div [class*="st"] {
-                    pointer-events: none !important;
-                }
-                </style>
-                <div class="processing-overlay" style="
-                    position: fixed !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    right: 0 !important;
-                    bottom: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    background-color: rgba(255, 255, 255, 0.02) !important;
-                    z-index: 999999999 !important;
-                    pointer-events: all !important;
-                    cursor: wait !important;
-                    display: block !important;
-                "></div>
-                <script>
-                // Also disable pointer events via JavaScript as backup
-                (function() {
-                    var style = document.createElement('style');
-                    style.id = 'processing-blocker';
-                    style.innerHTML = '* { pointer-events: none !important; cursor: wait !important; } .processing-overlay { pointer-events: all !important; }';
-                    document.head.appendChild(style);
-                })();
-                </script>
-                """,
-                unsafe_allow_html=True
-            )
-        else:
-            # Ensure pointer events are re-enabled when not processing
-            st.markdown(
-                """
-                <script>
-                (function() {
-                    var style = document.getElementById('processing-blocker');
-                    if (style) style.remove();
-                })();
-                </script>
-                """,
-                unsafe_allow_html=True
-            )
-
+        # Block interactions by not rendering interactive elements when processing
+        # This is the Streamlit-native way - much more reliable than overlays
         with toggle_col:
-            if st.button(
-                tool_button_label,
-                key="chat_tool_toggle",
-                help="Close Bulls assistants" if any_assistant_open else "Open Bulls assistants",
-                use_container_width=True,
-            ):
-                # Close everything if anything is open, otherwise open tool picker
-                if any_assistant_open:
-                    # Close all
-                    st.session_state.show_tool_picker = False
-                    st.session_state.show_email_builder = False
-                    st.session_state.show_meeting_builder = False
-                else:
-                    # Open tool picker
-                    st.session_state.show_tool_picker = True
-
-                st.rerun()
+            if not st.session_state.is_processing:
+                if st.button(
+                    tool_button_label,
+                    key="chat_tool_toggle",
+                    help="Close Bulls assistants" if any_assistant_open else "Open Bulls assistants",
+                    use_container_width=True,
+                ):
+                    # Close everything if anything is open, otherwise open tool picker
+                    if any_assistant_open:
+                        # Close all
+                        st.session_state.show_tool_picker = False
+                        st.session_state.show_email_builder = False
+                        st.session_state.show_meeting_builder = False
+                    else:
+                        # Open tool picker
+                        st.session_state.show_tool_picker = True
+                    st.rerun()
+            else:
+                # Show disabled button when processing
+                st.markdown(
+                    f"""
+                    <div style="
+                        background-color: #f0f2f6;
+                        border: 1px solid #dfe1e6;
+                        border-radius: 0.5rem;
+                        padding: 0.5rem;
+                        text-align: center;
+                        color: #a0a0a0;
+                        cursor: wait;
+                        height: 38px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                    ">{tool_button_label}</div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
         with input_col:
+            user_input = None
             if st.session_state.limit_reached:
                 st.warning(
                     f"Session token budget reached "
                     f"({st.session_state.token_total}/{SESSION_TOKEN_LIMIT}). "
                     "Please open a new session to continue."
                 )
-                user_input = None
+            elif st.session_state.is_processing:
+                # Show a disabled/visual-only input when processing
+                st.markdown(
+                    """
+                    <div style="
+                        background-color: #f8f9fa;
+                        border: 1px solid #dfe1e6;
+                        border-radius: 0.5rem;
+                        padding: 0.75rem 1rem;
+                        color: #a0a0a0;
+                        cursor: wait;
+                        font-family: 'Source Sans Pro', sans-serif;
+                    ">Ask the USF Campus Concierge...</div>
+                    """,
+                    unsafe_allow_html=True
+                )
             else:
-                # Always show chat input (will be blocked by overlay when processing)
+                # Only render interactive chat input when NOT processing
                 user_input = st.chat_input("Ask the USF Campus Concierge...")
 
         # Handle regeneration request (moved outside input_col)
