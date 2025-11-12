@@ -71,6 +71,7 @@ def initialize_session_state() -> None:
 
     # Processing state (for blocking all interactions during bot response)
     st.session_state.setdefault("is_processing", False)
+    st.session_state.setdefault("pending_user_input", None)
 
     # Dashboard
     st.session_state.setdefault("show_dashboard", True)

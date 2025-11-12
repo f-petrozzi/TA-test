@@ -495,17 +495,21 @@ else:
                     "Please open a new session to continue."
                 )
             elif st.session_state.is_processing:
-                # Show a disabled/visual-only input when processing
+                # Show a disabled/visual-only input when processing (matches button height)
                 st.markdown(
                     """
                     <div style="
                         background-color: #f8f9fa;
                         border: 1px solid #dfe1e6;
                         border-radius: 0.5rem;
-                        padding: 0.75rem 1rem;
+                        padding: 0.5rem 1rem;
+                        height: 38px;
                         color: #a0a0a0;
                         cursor: wait;
                         font-family: 'Source Sans Pro', sans-serif;
+                        display: flex;
+                        align-items: center;
+                        box-sizing: border-box;
                     ">Ask the USF Campus Concierge...</div>
                     """,
                     unsafe_allow_html=True
@@ -514,81 +518,93 @@ else:
                 # Only render interactive chat input when NOT processing
                 user_input = st.chat_input("Ask the USF Campus Concierge...")
 
-        # Handle regeneration request (moved outside input_col)
+        # Handle regeneration request - TWO PHASE APPROACH
+        # Phase 1: Button clicked → set flag and rerun (UI updates instantly)
         if st.session_state.pending_regen and not st.session_state.is_processing:
             if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
                 st.session_state.is_processing = True
-                handle_pending_action_collapses()
+                st.rerun()  # Critical: rerun NOW to update UI before processing
 
-                clean = st.session_state.messages[-1]["content"]
-                in_toks = estimate_tokens(clean)
-
-                with chat_col:
-                    with st.chat_message("assistant"):
-                        thinking_placeholder = st.empty()
-                        thinking_placeholder.markdown("Thinking...")
-
-                # Check for injection
-                if is_injection(clean):
-                    warn = "That looks like a prompt-injection attempt. For safety, I can't run that. Try a normal question."
-                    thinking_placeholder.markdown(warn)
-                    out_toks = estimate_tokens(warn)
-                    st.session_state.token_total += (in_toks + out_toks)
-                    st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-                    st.session_state.messages.append({"role": "assistant", "content": warn})
-                    db.add_message(st.session_state.current_session_id, "assistant", warn, tokens_out=out_toks)
-                    mcp_client.log_interaction(st.session_state.current_session_id, "injection_blocked", {"prompt": clean, "response": warn})
-                else:
-                    # Generate new response
-                    streamer = SmoothStreamer(thinking_placeholder)
-                    final_text = None
-                    matched_chunks = []
-                    last_chunk = ""
-
-                    for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
-                        text = payload.get("text", "")
-                        if not text:
-                            continue
-                        last_chunk = text
-                        streamer.update(text)
-                        if kind != "delta":
-                            final_text = text
-                            matched_chunks = payload.get("hits", [])
-
-                    streamer.finalize(final_text or last_chunk)
-                    if final_text is None:
-                        final_text = last_chunk
-
-                    if final_text:
-                        out_toks = estimate_tokens(final_text)
-                        st.session_state.token_total += (in_toks + out_toks)
-                        st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-                        st.session_state.messages.append({"role": "assistant", "content": final_text})
-                        db.add_message(st.session_state.current_session_id, "assistant", final_text, tokens_out=out_toks)
-                        mcp_client.log_interaction(
-                            st.session_state.current_session_id,
-                            "regenerate_response",
-                            {"prompt": clean, "response": final_text, "chunks": matched_chunks, "tokens_in": in_toks, "tokens_out": out_toks}
-                        )
-                        maybe_auto_open_assistant(final_text)
-                    else:
-                        error_msg = "We weren't able to generate a response. Please try again."
-                        thinking_placeholder.markdown(error_msg)
-                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
-                        db.add_message(st.session_state.current_session_id, "assistant", error_msg, tokens_out=estimate_tokens(error_msg))
-                        mcp_client.log_interaction(st.session_state.current_session_id, "assistant_error", {"prompt": clean, "error": "empty_response"})
-
-                # Clear regeneration state
-                st.session_state.pending_regen = False
-                st.session_state.is_processing = False
-                st.rerun()
-
-        # Handle user input
-        if user_input and not st.session_state.is_processing:
-            st.session_state.is_processing = True
+        # Phase 2: Process regeneration (UI already showing disabled state)
+        if st.session_state.is_processing and st.session_state.pending_regen:
             handle_pending_action_collapses()
 
-            clean = sanitize_user_input(user_input)
+            clean = st.session_state.messages[-1]["content"]
+            in_toks = estimate_tokens(clean)
+
+            with chat_col:
+                with st.chat_message("assistant"):
+                    thinking_placeholder = st.empty()
+                    thinking_placeholder.markdown("Thinking...")
+
+            # Check for injection
+            if is_injection(clean):
+                warn = "That looks like a prompt-injection attempt. For safety, I can't run that. Try a normal question."
+                thinking_placeholder.markdown(warn)
+                out_toks = estimate_tokens(warn)
+                st.session_state.token_total += (in_toks + out_toks)
+                st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                st.session_state.messages.append({"role": "assistant", "content": warn})
+                db.add_message(st.session_state.current_session_id, "assistant", warn, tokens_out=out_toks)
+                mcp_client.log_interaction(st.session_state.current_session_id, "injection_blocked", {"prompt": clean, "response": warn})
+            else:
+                # Generate new response
+                streamer = SmoothStreamer(thinking_placeholder)
+                final_text = None
+                matched_chunks = []
+                last_chunk = ""
+
+                for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
+                    text = payload.get("text", "")
+                    if not text:
+                        continue
+                    last_chunk = text
+                    streamer.update(text)
+                    if kind != "delta":
+                        final_text = text
+                        matched_chunks = payload.get("hits", [])
+
+                streamer.finalize(final_text or last_chunk)
+                if final_text is None:
+                    final_text = last_chunk
+
+                if final_text:
+                    out_toks = estimate_tokens(final_text)
+                    st.session_state.token_total += (in_toks + out_toks)
+                    st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                    st.session_state.messages.append({"role": "assistant", "content": final_text})
+                    db.add_message(st.session_state.current_session_id, "assistant", final_text, tokens_out=out_toks)
+                    mcp_client.log_interaction(
+                        st.session_state.current_session_id,
+                        "regenerate_response",
+                        {"prompt": clean, "response": final_text, "chunks": matched_chunks, "tokens_in": in_toks, "tokens_out": out_toks}
+                    )
+                    maybe_auto_open_assistant(final_text)
+                else:
+                    error_msg = "We weren't able to generate a response. Please try again."
+                    thinking_placeholder.markdown(error_msg)
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                    db.add_message(st.session_state.current_session_id, "assistant", error_msg, tokens_out=estimate_tokens(error_msg))
+                    mcp_client.log_interaction(st.session_state.current_session_id, "assistant_error", {"prompt": clean, "error": "empty_response"})
+
+            # Clear regeneration state
+            st.session_state.pending_regen = False
+            st.session_state.is_processing = False
+            st.rerun()
+
+
+        # Handle user input - TWO PHASE APPROACH
+        # Phase 1: User submits → set flag and rerun (UI updates instantly)
+        if user_input and not st.session_state.is_processing:
+            st.session_state.pending_user_input = user_input
+            st.session_state.is_processing = True
+            st.rerun()  # Critical: rerun NOW to update UI before processing
+
+        # Phase 2: Process the pending input (UI already showing disabled state)
+        if st.session_state.is_processing and st.session_state.get("pending_user_input"):
+            handle_pending_action_collapses()
+
+            clean = sanitize_user_input(st.session_state.pending_user_input)
             in_toks = estimate_tokens(clean)
 
             # Add user message
@@ -654,6 +670,7 @@ else:
                     mcp_client.log_interaction(st.session_state.current_session_id, "assistant_error", {"prompt": clean, "error": "empty_response"})
 
             # Clear processing state
+            st.session_state.pending_user_input = None
             st.session_state.is_processing = False
             st.rerun()
 
