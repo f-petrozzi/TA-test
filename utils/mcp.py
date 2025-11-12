@@ -655,7 +655,7 @@ class SimpleMCPClient:
             cwd=str(self._server_cwd),
         )
 
-    def _call_tool(self, tool_name: str, arguments: dict[str, Any], timeout: float = 30.0):
+    def _call_tool(self, tool_name: str, arguments: dict[str, Any], timeout: float = 120.0):
         """
         Call MCP tool via stdio transport.
         Optimized to skip unnecessary list_tools() call.
