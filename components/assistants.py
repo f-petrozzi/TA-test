@@ -25,35 +25,23 @@ def render_tool_picker() -> None:
 
     tool_col1, tool_col2 = st.columns(2)
 
-    # Only show interactive buttons when NOT processing
-    if not st.session_state.get("is_processing", False):
-        with tool_col1:
-            st.markdown("<div class='assistant-card'>", unsafe_allow_html=True)
-            if st.button("📧 Email Assistant", key="picker_email", use_container_width=True):
-                st.session_state.show_email_builder = True
-                st.session_state.show_meeting_builder = False
-                st.session_state.show_tool_picker = False
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
+    with tool_col1:
+        st.markdown("<div class='assistant-card'>", unsafe_allow_html=True)
+        if st.button("📧 Email Assistant", key="picker_email", use_container_width=True):
+            st.session_state.show_email_builder = True
+            st.session_state.show_meeting_builder = False
+            st.session_state.show_tool_picker = False
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        with tool_col2:
-            st.markdown("<div class='assistant-card'>", unsafe_allow_html=True)
-            if st.button("📅 Meeting Assistant", key="picker_meeting", use_container_width=True):
-                st.session_state.show_meeting_builder = True
-                st.session_state.show_email_builder = False
-                st.session_state.show_tool_picker = False
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        with tool_col1:
-            st.markdown("<div class='assistant-card'>", unsafe_allow_html=True)
-            st.button("📧 Email Assistant", key="picker_email", use_container_width=True, disabled=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        with tool_col2:
-            st.markdown("<div class='assistant-card'>", unsafe_allow_html=True)
-            st.button("📅 Meeting Assistant", key="picker_meeting", use_container_width=True, disabled=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+    with tool_col2:
+        st.markdown("<div class='assistant-card'>", unsafe_allow_html=True)
+        if st.button("📅 Meeting Assistant", key="picker_meeting", use_container_width=True):
+            st.session_state.show_meeting_builder = True
+            st.session_state.show_email_builder = False
+            st.session_state.show_tool_picker = False
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_email_builder(mcp_client, db) -> None:

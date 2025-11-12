@@ -451,17 +451,15 @@ else:
                     st.session_state.pending_meeting
                 )
                 if is_regular_query:
-                    # Disable button when processing OR when regeneration is pending
+                    # Only show regenerate button when NOT processing and NOT already regenerating
                     if not st.session_state.is_processing and not st.session_state.get("pending_regen", False):
                         if st.button("🔄 Regenerate Last Response", key="regen_button"):
                             st.session_state.messages.pop()
                             st.session_state.pending_regen = True
                             st.rerun()
-                    else:
-                        st.button("🔄 Regenerate Last Response", key="regen_button", disabled=True)
 
-            # Render assistants (always render with disabled buttons when processing)
-            if st.session_state.show_tool_picker:
+            # Render assistants (completely hide when processing)
+            if st.session_state.show_tool_picker and not st.session_state.is_processing:
                 with st.chat_message("assistant"):
                     render_tool_picker()
 
