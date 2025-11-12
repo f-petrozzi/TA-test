@@ -442,8 +442,7 @@ else:
                     st.write(msg["content"])
 
             # Only show regenerate button for regular query responses, not email/meeting outputs
-            # And only when not currently processing
-            if history and history[-1]["role"] == "assistant" and not st.session_state.is_processing:
+            if history and history[-1]["role"] == "assistant":
                 # Check if this is a regular query response (not email/meeting related)
                 is_regular_query = not (
                     st.session_state.show_email_builder or
@@ -451,21 +450,25 @@ else:
                     st.session_state.pending_email or
                     st.session_state.pending_meeting
                 )
-                if is_regular_query and st.button("🔄 Regenerate Last Response", key="regen_button"):
-                    st.session_state.messages.pop()
-                    st.session_state.pending_regen = True
-                    st.rerun()
+                if is_regular_query:
+                    if not st.session_state.is_processing:
+                        if st.button("🔄 Regenerate Last Response", key="regen_button"):
+                            st.session_state.messages.pop()
+                            st.session_state.pending_regen = True
+                            st.rerun()
+                    else:
+                        st.button("🔄 Regenerate Last Response", key="regen_button", disabled=True)
 
-            # Render assistants (keep them visible even when processing to avoid graying out)
-            if st.session_state.show_tool_picker:
+            # Render assistants (don't render when processing to prevent graying out)
+            if st.session_state.show_tool_picker and not st.session_state.is_processing:
                 with st.chat_message("assistant"):
                     render_tool_picker()
 
-            if st.session_state.show_email_builder:
+            if st.session_state.show_email_builder and not st.session_state.is_processing:
                 with st.chat_message("assistant"):
                     render_email_builder(mcp_client, db)
 
-            if st.session_state.show_meeting_builder:
+            if st.session_state.show_meeting_builder and not st.session_state.is_processing:
                 with st.chat_message("assistant"):
                     render_meeting_builder(mcp_client, db)
 
@@ -629,20 +632,30 @@ else:
             st.rerun()
 
         # Handle email draft generation - TWO PHASE APPROACH
-        # Phase 2: Process the pending email draft (original function has its own message)
+        # Phase 2: Process the pending email draft
         if st.session_state.is_processing and st.session_state.get("pending_email_draft"):
             from agents.email_assistant import start_email_draft
             params = st.session_state.pending_email_draft
+
+            with chat_col:
+                with st.chat_message("assistant"):
+                    st.markdown(f"✉️ Drafting reply to **{params['to']}** ...")
+
             start_email_draft(mcp_client, db, params["to"], params["subject"], params["message"])
             st.session_state.pending_email_draft = None
             st.session_state.is_processing = False
             st.rerun()
 
         # Handle email AI edit - TWO PHASE APPROACH
-        # Phase 2: Process the pending email edit (original function has its own message)
+        # Phase 2: Process the pending email edit
         if st.session_state.is_processing and st.session_state.get("pending_email_edit"):
             from agents.email_assistant import apply_email_edit
             params = st.session_state.pending_email_edit
+
+            with chat_col:
+                with st.chat_message("assistant"):
+                    st.markdown("✏️ Updating the email draft …")
+
             apply_email_edit(mcp_client, db, params["instructions"])
             st.session_state.pending_email_edit = None
             st.session_state.is_processing = False
@@ -672,10 +685,15 @@ else:
             st.rerun()
 
         # Handle meeting AI edit - TWO PHASE APPROACH
-        # Phase 2: Process the pending meeting edit (original function has its own message)
+        # Phase 2: Process the pending meeting edit
         if st.session_state.is_processing and st.session_state.get("pending_meeting_edit"):
             from agents.meeting_assistant import apply_meeting_edit
             params = st.session_state.pending_meeting_edit
+
+            with chat_col:
+                with st.chat_message("assistant"):
+                    st.markdown("✏️ Updating meeting notes …")
+
             apply_meeting_edit(mcp_client, db, params["instructions"])
             st.session_state.pending_meeting_edit = None
             st.session_state.is_processing = False

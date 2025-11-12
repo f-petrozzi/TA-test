@@ -51,11 +51,8 @@ def start_email_draft(mcp_client, db, to_addr: str, subject: str, student_msg: s
 
     in_toks = estimate_tokens(student_msg)
 
-    # Show drafting message
-    with st.chat_message("assistant"):
-        st.markdown(f"✉️ Drafting reply to **{to_addr}** ...")
-
     # Draft email without showing in chat history
+    # Note: Drafting message will be shown by caller in chat_col
     drafted = draft_email_via_mcp(
         mcp_client,
         db,
@@ -106,11 +103,8 @@ def apply_email_edit(mcp_client, db, instructions: str) -> None:
         st.warning("Enter edit instructions before applying an AI edit.")
         return
 
-    # Show updating message
-    with st.chat_message("assistant"):
-        st.markdown("✏️ Updating the email draft …")
-
     # Update email draft without showing in chat history
+    # Note: Updating message will be shown by caller in chat_col
     drafted = draft_email_via_mcp(
         mcp_client,
         db,

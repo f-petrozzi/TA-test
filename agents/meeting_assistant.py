@@ -161,52 +161,43 @@ def apply_meeting_edit(mcp_client, db, instructions: str) -> None:
         return
 
     # Use mcp_client to regenerate meeting notes with instructions
+    # Note: Updating message will be shown by caller in chat_col
     current_notes = st.session_state.meeting_notes_text or plan.get("ai_notes", "")
 
-    with st.chat_message("assistant"):
-        st.markdown("✏️ Updating meeting notes …")
-        try:
-            # Re-plan meeting with edit instructions
-            updated_plan = mcp_client.plan_meeting(
-                plan.get("summary", ""),
-                plan.get("start", ""),
-                plan.get("duration", 30),
-                attendees=plan.get("attendees"),
-                agenda=f"{current_notes}\n\nEdit instructions: {instructions}",
-                location=plan.get("location", ""),
-                session_id=st.session_state.current_session_id,
-            )
+    try:
+        # Re-plan meeting with edit instructions
+        updated_plan = mcp_client.plan_meeting(
+            plan.get("summary", ""),
+            plan.get("start", ""),
+            plan.get("duration", 30),
+            attendees=plan.get("attendees"),
+            agenda=f"{current_notes}\n\nEdit instructions: {instructions}",
+            location=plan.get("location", ""),
+            session_id=st.session_state.current_session_id,
+        )
 
-            if updated_plan and updated_plan.get("ai_notes"):
-                revised_notes = updated_plan["ai_notes"]
-                st.markdown(revised_notes)
-            else:
-                st.warning("Could not generate updated notes.")
-                return
-        except RuntimeError as e:
-            st.error(f"Failed to update notes: {e}")
+        if updated_plan and updated_plan.get("ai_notes"):
+            revised_notes = updated_plan["ai_notes"]
+        else:
+            st.warning("Could not generate updated notes.")
             return
+    except RuntimeError as e:
+        st.error(f"Failed to update notes: {e}")
+        return
 
-    # Update plan and sync to text area
+    # Update plan and sync to text area (don't add to chat history)
     plan["ai_notes"] = revised_notes
     plan["description"] = revised_notes
     st.session_state.pending_meeting = plan
     st.session_state.meeting_notes_sync_value = revised_notes
 
-    out_toks = estimate_tokens(revised_notes)
-    st.session_state.messages.append({"role": "assistant", "content": revised_notes})
-    db.add_message(
-        st.session_state.current_session_id,
-        "assistant",
-        revised_notes,
-        tokens_out=out_toks,
-    )
+    # Log interaction but don't add to chat history
     mcp_client.log_interaction(
         st.session_state.current_session_id,
         "meeting_edit",
         {"instructions": instructions, "notes": revised_notes},
     )
-    st.session_state.token_total += out_toks
+    st.session_state.show_meeting_builder = True
 
 
 def save_manual_meeting_edit(text: str) -> bool:
