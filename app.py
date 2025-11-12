@@ -431,58 +431,67 @@ else:
                 )
                 user_input = None
             elif st.session_state.is_processing:
-                # Disable input while processing
+                # Show disabled state message instead of input
+                st.info("Processing your request...")
                 user_input = None
             else:
                 user_input = st.chat_input("Ask the USF Campus Concierge...")
 
             # Handle regeneration
             if st.session_state.pending_regen and st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-                st.session_state.pending_regen = False
-                st.session_state.is_processing = True
-                last_user = st.session_state.messages[-1]["content"]
+                if not st.session_state.is_processing:
+                    # First time - set processing and rerun to disable input
+                    st.session_state.is_processing = True
+                    st.rerun()
+                else:
+                    # Already processing - execute regeneration
+                    st.session_state.pending_regen = False
+                    last_user = st.session_state.messages[-1]["content"]
 
-                with chat_col:
-                    with st.chat_message("assistant"):
-                        stream_block = st.empty()
-                        streamer = SmoothStreamer(stream_block)
-                        final_text = None
-                        matched_chunks = []
-                        last_chunk = ""
+                    with chat_col:
+                        # Show thinking indicator
+                        with st.chat_message("assistant"):
+                            thinking_placeholder = st.empty()
+                            thinking_placeholder.markdown("Thinking...")
 
-                        for kind, payload in generate_with_rag(last_user, mcp_client=mcp_client):
-                            text = payload.get("text", "")
-                            if not text:
-                                continue
-                            last_chunk = text
-                            streamer.update(text)
-                            if kind != "delta":
-                                final_text = text
-                                matched_chunks = payload.get("hits", [])
+                            streamer = SmoothStreamer(thinking_placeholder)
+                            final_text = None
+                            matched_chunks = []
+                            last_chunk = ""
 
-                        streamer.finalize(final_text or last_chunk)
+                            for kind, payload in generate_with_rag(last_user, mcp_client=mcp_client):
+                                text = payload.get("text", "")
+                                if not text:
+                                    continue
+                                last_chunk = text
+                                streamer.update(text)
+                                if kind != "delta":
+                                    final_text = text
+                                    matched_chunks = payload.get("hits", [])
 
-                if final_text is None:
-                    final_text = last_chunk
+                            streamer.finalize(final_text or last_chunk)
 
-                out_toks = estimate_tokens(final_text or "")
-                st.session_state.token_total += out_toks
-                st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-                st.session_state.messages.append({"role": "assistant", "content": final_text})
-                db.add_message(
-                    st.session_state.current_session_id,
-                    "assistant",
-                    final_text,
-                    tokens_out=out_toks,
-                )
-                mcp_client.log_interaction(
-                    st.session_state.current_session_id,
-                    "assistant_regen",
-                    {"query": last_user, "response": final_text, "chunks": matched_chunks},
-                )
-                maybe_auto_open_assistant(final_text)
-                st.session_state.is_processing = False
-                st.rerun()
+                    if final_text is None:
+                        final_text = last_chunk
+
+                    out_toks = estimate_tokens(final_text or "")
+                    st.session_state.token_total += out_toks
+                    st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                    st.session_state.messages.append({"role": "assistant", "content": final_text})
+                    db.add_message(
+                        st.session_state.current_session_id,
+                        "assistant",
+                        final_text,
+                        tokens_out=out_toks,
+                    )
+                    mcp_client.log_interaction(
+                        st.session_state.current_session_id,
+                        "assistant_regen",
+                        {"query": last_user, "response": final_text, "chunks": matched_chunks},
+                    )
+                    maybe_auto_open_assistant(final_text)
+                    st.session_state.is_processing = False
+                    st.rerun()
 
         # Handle user input
         if user_input:
