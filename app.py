@@ -591,6 +591,9 @@ else:
         if st.session_state.is_processing and st.session_state.pending_user_input:
             handle_pending_action_collapses()
             clean = sanitize_user_input(st.session_state.pending_user_input)
+            # Clear pending input immediately to prevent reprocessing on reruns
+            st.session_state.pending_user_input = None
+
             in_toks = estimate_tokens(clean)
             st.session_state.messages.append({"role": "user", "content": clean})
             db.add_message(
@@ -629,7 +632,6 @@ else:
                     "injection_blocked",
                     {"prompt": clean, "response": warn},
                 )
-                st.session_state.pending_user_input = None
                 st.session_state.is_processing = False
                 st.rerun()
 
