@@ -2,6 +2,7 @@ import os
 import uuid
 import json
 import logging
+import threading
 from datetime import datetime
 from typing import Any, Optional
 
@@ -179,17 +180,36 @@ class ChatDatabase:
         sessions = self.get_user_sessions(user_id)
         if not query:
             return sessions
+
         q = (query or "").lower()
-        matching = []
+        matching_sessions = {}
+
+        # First pass: Find sessions that match by name
         for s in sessions:
             name = s.get("session_name", "")
             if q in name.lower():
-                matching.append(s)
-                continue
-            msgs = self.get_session_messages(s.get("id"))
-            if any(q in (m.get("content") or "").lower() for m in msgs):
-                matching.append(s)
-        return matching
+                matching_sessions[s.get("id")] = s
+
+        # Second pass: Find sessions that match by message content
+        # Do this in a single query instead of N queries
+        try:
+            session_ids = [s.get("id") for s in sessions if s.get("id") not in matching_sessions]
+            if session_ids:
+                resp = (
+                    self._client.table(self._messages_table)
+                    .select("session_id")
+                    .in_("session_id", session_ids)
+                    .ilike("content", f"%{q}%")
+                    .execute()
+                )
+                matched_session_ids = {msg.get("session_id") for msg in (getattr(resp, "data", []) or [])}
+                for s in sessions:
+                    if s.get("id") in matched_session_ids:
+                        matching_sessions[s.get("id")] = s
+        except Exception as e:
+            logger.error(f"Failed to search messages: {e}")
+
+        return list(matching_sessions.values())
 
     def export_session_json(self, user_id: str, session_id: str) -> str:
         session = self.get_session(session_id)
@@ -205,17 +225,26 @@ class ChatDatabase:
 
     # audit
     def log_event(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        """
+        Log an audit event asynchronously (non-blocking).
+        Uses background thread to avoid blocking response times.
+        """
         if not self._audit_table:
             return
-        try:
-            record = {
-                "id": str(uuid.uuid4()),
-                "session_id": session_id,
-                "event_type": event_type,
-                "payload": payload,
-                "created_at": datetime.utcnow().isoformat(timespec="seconds"),
-            }
-            self._client.table(self._audit_table).insert(record).execute()
-        except Exception as e:
-            logger.error(f"Failed to log audit event {event_type} for session {session_id}: {e}")
-            return
+
+        def _log_in_background():
+            try:
+                record = {
+                    "id": str(uuid.uuid4()),
+                    "session_id": session_id,
+                    "event_type": event_type,
+                    "payload": payload,
+                    "created_at": datetime.utcnow().isoformat(timespec="seconds"),
+                }
+                self._client.table(self._audit_table).insert(record).execute()
+            except Exception as e:
+                logger.error(f"Failed to log audit event {event_type} for session {session_id}: {e}")
+
+        # Fire and forget - don't block on logging
+        thread = threading.Thread(target=_log_in_background, daemon=True)
+        thread.start()
