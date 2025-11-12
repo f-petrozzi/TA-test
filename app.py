@@ -611,6 +611,7 @@ else:
                     st.session_state.processing_query = None
                     st.session_state.processing_tokens_in = None
                     st.session_state.processing_cached_result = None
+                    st.session_state.processing_response_saved = False
                     st.session_state.is_processing = False
                     st.rerun()
                 # Messages already added, just render UI
@@ -673,11 +674,14 @@ else:
                 st.session_state.processing_query = None
                 st.session_state.processing_tokens_in = None
                 st.session_state.processing_cached_result = None
+                st.session_state.processing_response_saved = False
                 st.session_state.is_processing = False
                 st.rerun()
 
             # Generate response with RAG (or use cached result)
             cached_result = st.session_state.get("processing_cached_result")
+            response_already_saved = st.session_state.get("processing_response_saved", False)
+
             if cached_result and cached_result.get("input_id") == st.session_state.processing_input_id:
                 # Use cached result from previous completed run
                 final_text = cached_result.get("text")
@@ -733,34 +737,43 @@ else:
                 st.session_state.processing_query = None
                 st.session_state.processing_tokens_in = None
                 st.session_state.processing_cached_result = None
+                st.session_state.processing_response_saved = False
                 st.session_state.is_processing = False
                 st.rerun()
 
-            out_toks = estimate_tokens(final_text or "")
-            st.session_state.token_total += (in_toks + out_toks)
-            st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-            st.session_state.messages.append({"role": "assistant", "content": final_text})
-            db.add_message(
-                st.session_state.current_session_id,
-                "assistant",
-                final_text,
-                tokens_out=out_toks,
-            )
-            mcp_client.log_interaction(
-                st.session_state.current_session_id,
-                "assistant_reply",
-                {
-                    "prompt": clean,
-                    "response": final_text,
-                    "chunks": matched_chunks,
-                    "tokens_in": in_toks,
-                    "tokens_out": out_toks,
-                },
-            )
-            maybe_auto_open_assistant(final_text)
+            # Only save response if we haven't already saved it
+            # This prevents duplicates when reruns occur after response generation
+            if not response_already_saved:
+                out_toks = estimate_tokens(final_text or "")
+                st.session_state.token_total += (in_toks + out_toks)
+                st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                st.session_state.messages.append({"role": "assistant", "content": final_text})
+                db.add_message(
+                    st.session_state.current_session_id,
+                    "assistant",
+                    final_text,
+                    tokens_out=out_toks,
+                )
+                mcp_client.log_interaction(
+                    st.session_state.current_session_id,
+                    "assistant_reply",
+                    {
+                        "prompt": clean,
+                        "response": final_text,
+                        "chunks": matched_chunks,
+                        "tokens_in": in_toks,
+                        "tokens_out": out_toks,
+                    },
+                )
+                maybe_auto_open_assistant(final_text)
+                # Mark response as saved to prevent duplicate saves on future reruns
+                st.session_state.processing_response_saved = True
+
+            # Clear processing state
             st.session_state.pending_user_input = None
             st.session_state.processing_input_id = None
             st.session_state.processing_query = None
+            st.session_state.processing_response_saved = False
             st.session_state.is_processing = False
             st.rerun()
 
