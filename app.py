@@ -445,20 +445,56 @@ else:
         toggle_col, input_col = st.columns([0.03, 0.97], gap=None)
 
         # Full-screen overlay to block ALL interactions when processing
+        # Uses multiple techniques to ensure it works
         if st.session_state.is_processing:
             st.markdown(
                 """
-                <div style="
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    width: 100vw;
-                    height: 100vh;
-                    background-color: rgba(0, 0, 0, 0.01);
-                    z-index: 999999;
-                    pointer-events: all;
-                    cursor: wait;
+                <style>
+                /* Disable pointer events on all Streamlit elements when processing */
+                .processing-overlay ~ div button,
+                .processing-overlay ~ div input,
+                .processing-overlay ~ div textarea,
+                .processing-overlay ~ div [data-testid],
+                .processing-overlay ~ div [class*="st"] {
+                    pointer-events: none !important;
+                }
+                </style>
+                <div class="processing-overlay" style="
+                    position: fixed !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    right: 0 !important;
+                    bottom: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    background-color: rgba(255, 255, 255, 0.02) !important;
+                    z-index: 999999999 !important;
+                    pointer-events: all !important;
+                    cursor: wait !important;
+                    display: block !important;
                 "></div>
+                <script>
+                // Also disable pointer events via JavaScript as backup
+                (function() {
+                    var style = document.createElement('style');
+                    style.id = 'processing-blocker';
+                    style.innerHTML = '* { pointer-events: none !important; cursor: wait !important; } .processing-overlay { pointer-events: all !important; }';
+                    document.head.appendChild(style);
+                })();
+                </script>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            # Ensure pointer events are re-enabled when not processing
+            st.markdown(
+                """
+                <script>
+                (function() {
+                    var style = document.getElementById('processing-blocker');
+                    if (style) style.remove();
+                })();
+                </script>
                 """,
                 unsafe_allow_html=True
             )
