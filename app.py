@@ -644,6 +644,7 @@ else:
             start_email_draft(mcp_client, db, params["to"], params["subject"], params["message"])
             st.session_state.pending_email_draft = None
             st.session_state.is_processing = False
+            st.session_state.show_email_builder = True  # Reopen assistant after processing
             st.rerun()
 
         # Handle email AI edit - TWO PHASE APPROACH
@@ -659,6 +660,7 @@ else:
             apply_email_edit(mcp_client, db, params["instructions"])
             st.session_state.pending_email_edit = None
             st.session_state.is_processing = False
+            st.session_state.show_email_builder = True  # Reopen assistant after processing
             st.rerun()
 
         # Handle meeting planning - TWO PHASE APPROACH
@@ -682,6 +684,7 @@ else:
             )
             st.session_state.pending_meeting_plan = None
             st.session_state.is_processing = False
+            st.session_state.show_meeting_builder = True  # Reopen assistant after processing
             st.rerun()
 
         # Handle meeting AI edit - TWO PHASE APPROACH
@@ -697,6 +700,7 @@ else:
             apply_meeting_edit(mcp_client, db, params["instructions"])
             st.session_state.pending_meeting_edit = None
             st.session_state.is_processing = False
+            st.session_state.show_meeting_builder = True  # Reopen assistant after processing
             st.rerun()
 
         # Handle user input - TWO PHASE APPROACH
