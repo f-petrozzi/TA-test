@@ -704,10 +704,12 @@ else:
         if user_input and not st.session_state.is_processing:
             st.session_state.pending_user_input = user_input
             st.session_state.is_processing = True
-            # Close all assistants when regular prompt is sent
+            # Close all assistants and clear pending data when regular prompt is sent
             st.session_state.show_tool_picker = False
             st.session_state.show_email_builder = False
             st.session_state.show_meeting_builder = False
+            st.session_state.pending_email = None
+            st.session_state.pending_meeting = None
             st.rerun()  # Critical: rerun NOW to update UI before processing
 
         # Phase 2: Process the pending input (UI already showing disabled state)
