@@ -614,12 +614,11 @@ else:
                     st.session_state.processing_response_saved = False
                     st.session_state.is_processing = False
                     st.rerun()
-                # Messages already added, just render UI
+                # Messages already added and displayed from history
+                # Just create the thinking indicator - don't duplicate the user message
                 in_toks = st.session_state.get("processing_tokens_in", 0)
                 with chat_col:
-                    with st.chat_message("user"):
-                        st.write(clean)
-                    # Show thinking indicator
+                    # User message already displayed from history, so only show thinking indicator
                     with st.chat_message("assistant"):
                         thinking_placeholder = st.empty()
                         thinking_placeholder.markdown("Thinking...")
@@ -688,7 +687,7 @@ else:
                 matched_chunks = cached_result.get("chunks", [])
                 thinking_placeholder.markdown(final_text)
             else:
-                # Generate new result (or restart if interrupted)
+                # Generate new result
                 streamer = SmoothStreamer(thinking_placeholder)
                 final_text = None
                 matched_chunks = []
