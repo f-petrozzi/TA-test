@@ -8,10 +8,10 @@ UTC = ZoneInfo("UTC")
 EASTERN = ZoneInfo("America/New_York")
 
 MEETING_TIMEZONE_OFFSETS = {
-    "US/Eastern (EST)": "-05:00",
-    "US/Central (CST)": "-06:00",
-    "US/Mountain (MST)": "-07:00",
-    "US/Pacific (PST)": "-08:00",
+    "US/Eastern (EST)": "-04:00",  # EDT offset (daylight saving time)
+    "US/Central (CST)": "-05:00",  # CDT offset
+    "US/Mountain (MST)": "-06:00",  # MDT offset
+    "US/Pacific (PST)": "-07:00",  # PDT offset
 }
 
 _SUBJECT_PREFIX = re.compile(
@@ -58,6 +58,7 @@ def split_subject_from_body(text: str) -> tuple[Optional[str], str]:
 
 def build_start_iso(selected_date, selected_time, tz_label: str) -> str:
     """Build ISO timestamp from date, time, and timezone label."""
+    # Default to EDT offset if timezone not found
     offset = MEETING_TIMEZONE_OFFSETS.get(tz_label, "-04:00")
     combined = datetime.combine(selected_date, selected_time)
     return combined.strftime("%Y-%m-%dT%H:%M") + offset
