@@ -25,12 +25,6 @@ from agents.mcp import SimpleMCPClient
 from tools.google_tools import GoogleWorkspaceTools
 from utils.streaming import SmoothStreamer
 from utils.ui_helpers import inject_global_styles, scroll_chat_to_bottom
-from utils.session_manager import (
-    get_session_token,
-    get_session_from_token,
-    issue_session_token,
-    revoke_session,
-)
 from utils.state_manager import (
     initialize_session_state,
     handle_pending_action_collapses,
@@ -81,26 +75,13 @@ def recompute_token_total(msgs: list[dict]) -> int:
     )
 
 
-# Handle simple token-based authentication
-# Try to restore session from query parameter
-if not st.session_state.authenticated:
-    session_token = get_session_token()
-    if session_token:
-        session_payload = get_session_from_token(session_token)
-        if session_payload:
-            st.session_state.authenticated = True
-            st.session_state.user_id = session_payload["user_id"]
-            st.session_state.username = session_payload["username"]
-
 # Handle pending login (after user submits login form)
 pending_login = st.session_state.get("pending_login")
 if pending_login:
-    # Issue new session token
     user_id = pending_login.get("user_id")
     username = pending_login.get("username")
-    issue_session_token(user_id, username)
 
-    # Update session state
+    # Update session state (no token persistence - user will need to re-login on refresh)
     st.session_state.authenticated = True
     st.session_state.user_id = user_id
     st.session_state.username = username
@@ -219,9 +200,6 @@ else:
         st.markdown(f"### 👤 {st.session_state.username}")
 
         if st.button("🚪 Logout", use_container_width=True):
-            # Revoke session token
-            revoke_session()
-
             # Clear session state
             st.session_state.authenticated = False
             st.session_state.user_id = None
