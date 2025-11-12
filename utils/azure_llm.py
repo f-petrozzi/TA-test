@@ -66,6 +66,7 @@ def stream_chat(
     *,
     temperature: float = 0.2,
     deployment_name: str = "AZURE_PHI4_ORCHESTRATOR",
+    timeout: float = 60.0,
 ) -> Generator[str, None, None]:
     model = require_azure_env(deployment, deployment_name)
     client = get_azure_client()
@@ -75,17 +76,29 @@ def stream_chat(
             messages=messages,
             temperature=temperature,
             stream=True,
+            timeout=timeout,
         )
     except NotFoundError as exc:
         raise RuntimeError(
             f"Azure OpenAI deployment '{model}' was not found. "
             "Ensure AZURE_PHI4_ORCHESTRATOR (or AZURE_OPENAI_DEPLOYMENT) matches the deployment name in Azure."
         ) from exc
-    for event in stream:
-        for choice in getattr(event, "choices", []):
-            delta = getattr(choice, "delta", None)
-            if delta and delta.content:
-                yield _content_to_text(delta.content)
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"Azure OpenAI request timed out after {timeout}s. "
+            "The service may be slow or unavailable."
+        ) from exc
+
+    try:
+        for event in stream:
+            for choice in getattr(event, "choices", []):
+                delta = getattr(choice, "delta", None)
+                if delta and delta.content:
+                    yield _content_to_text(delta.content)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Error during Azure OpenAI stream processing: {exc}"
+        ) from exc
 
 
 def complete_chat(
@@ -94,6 +107,7 @@ def complete_chat(
     *,
     temperature: float = 0.2,
     deployment_name: str = "AZURE_PHI4_SPECIALIST",
+    timeout: float = 60.0,
 ) -> str:
     model = require_azure_env(deployment, deployment_name)
     client = get_azure_client()
@@ -102,11 +116,17 @@ def complete_chat(
             model=model,
             messages=messages,
             temperature=temperature,
+            timeout=timeout,
         )
     except NotFoundError as exc:
         raise RuntimeError(
             f"Azure OpenAI deployment '{model}' was not found. "
             "Check AZURE_PHI4_EMAIL/AZURE_PHI4_MEETING env vars and ensure the deployments exist."
+        ) from exc
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"Azure OpenAI request timed out after {timeout}s. "
+            "The service may be slow or unavailable."
         ) from exc
     if not resp.choices:
         return ""

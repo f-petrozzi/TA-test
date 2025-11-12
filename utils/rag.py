@@ -327,7 +327,7 @@ def build_sources_block(hits: List[Dict[str, Any]]) -> str:
             return ""
         p = urlparse(u)
         disp = (p.netloc + p.path).rstrip("/")
-        return disp if len(disp) <= 80 else disp[:77] + "…"
+        return disp
 
     lines, seen = [], set()
     i = 0
