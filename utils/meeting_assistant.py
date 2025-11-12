@@ -157,7 +157,7 @@ def create_meeting_event(mcp_client, db) -> None:
 
     queue_action_collapse("meeting", meeting_action)
     st.session_state.pending_meeting = None
-    st.session_state.meeting_notes_text = ""
+    # Don't modify widget keys directly - they'll be cleared when widget isn't rendered
     st.session_state.meeting_notes_sync_value = None
 
 

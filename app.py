@@ -421,8 +421,9 @@ else:
                     f"({st.session_state.token_total}/{SESSION_TOKEN_LIMIT}). "
                     "Please open a new session to continue."
                 )
+                user_input = None
             elif st.session_state.is_processing:
-                st.info("🤔 Thinking...")
+                # Disable input while processing
                 user_input = None
             else:
                 user_input = st.chat_input("Ask the USF Campus Concierge...")
@@ -477,9 +478,15 @@ else:
 
         # Handle user input
         if user_input:
+            # Store input and set processing state, then rerun to disable input
+            st.session_state.pending_user_input = user_input
             st.session_state.is_processing = True
+            st.rerun()
+
+        # Process pending user input
+        if st.session_state.is_processing and st.session_state.pending_user_input:
             handle_pending_action_collapses()
-            clean = sanitize_user_input(user_input)
+            clean = sanitize_user_input(st.session_state.pending_user_input)
             in_toks = estimate_tokens(clean)
             st.session_state.messages.append({"role": "user", "content": clean})
             db.add_message(
@@ -493,13 +500,15 @@ else:
                 with st.chat_message("user"):
                     st.write(clean)
 
+                # Show thinking indicator
+                with st.chat_message("assistant"):
+                    thinking_placeholder = st.empty()
+                    thinking_placeholder.markdown("Thinking...")
+
             # Check for injection
             if is_injection(clean):
                 warn = "That looks like a prompt-injection attempt. For safety, I can't run that. Try a normal question."
-                with chat_col:
-                    with st.chat_message("assistant"):
-                        warn_block = st.empty()
-                        warn_block.markdown(warn)
+                thinking_placeholder.markdown(warn)
 
                 out_toks = estimate_tokens(warn)
                 st.session_state.token_total += (in_toks + out_toks)
@@ -516,36 +525,34 @@ else:
                     "injection_blocked",
                     {"prompt": clean, "response": warn},
                 )
+                st.session_state.pending_user_input = None
                 st.session_state.is_processing = False
                 st.rerun()
 
             # Generate response with RAG
-            with chat_col:
-                with st.chat_message("assistant"):
-                    stream_block = st.empty()
-                    streamer = SmoothStreamer(stream_block)
-                    final_text = None
-                    matched_chunks = []
-                    last_chunk = ""
+            streamer = SmoothStreamer(thinking_placeholder)
+            final_text = None
+            matched_chunks = []
+            last_chunk = ""
 
-                    for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
-                        text = payload.get("text", "")
-                        if not text:
-                            continue
-                        last_chunk = text
-                        streamer.update(text)
-                        if kind != "delta":
-                            final_text = text
-                            matched_chunks = payload.get("hits", [])
+            for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
+                text = payload.get("text", "")
+                if not text:
+                    continue
+                last_chunk = text
+                streamer.update(text)
+                if kind != "delta":
+                    final_text = text
+                    matched_chunks = payload.get("hits", [])
 
-                    streamer.finalize(final_text or last_chunk)
+            streamer.finalize(final_text or last_chunk)
 
             if final_text is None:
                 final_text = last_chunk
 
             if final_text is None:
                 error_msg = "We weren't able to generate a response. Please try again."
-                stream_block.markdown(error_msg)
+                thinking_placeholder.markdown(error_msg)
                 mcp_client.log_interaction(
                     st.session_state.current_session_id,
                     "assistant_error",
@@ -558,6 +565,7 @@ else:
                     error_msg,
                     tokens_out=estimate_tokens(error_msg),
                 )
+                st.session_state.pending_user_input = None
                 st.session_state.is_processing = False
                 st.rerun()
 
@@ -583,6 +591,7 @@ else:
                 },
             )
             maybe_auto_open_assistant(final_text)
+            st.session_state.pending_user_input = None
             st.session_state.is_processing = False
             st.rerun()
 
