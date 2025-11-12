@@ -199,72 +199,77 @@ else:
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.username}")
 
-        if st.button("🚪 Logout", use_container_width=True):
-            # Clear session state
-            st.session_state.authenticated = False
-            st.session_state.user_id = None
-            st.session_state.username = None
-            st.session_state.current_session_id = None
-            st.session_state.messages = []
-            st.session_state.token_total = 0
-            st.session_state.limit_reached = False
-            st.session_state.show_dashboard = True
-            st.rerun()
-
-        if st.button("🏠 Dashboard", use_container_width=True):
-            st.session_state.current_session_id = None
-            st.session_state.show_dashboard = True
-            st.rerun()
-
-        if st.button("➕ New Chat", use_container_width=True, type="primary"):
-            from datetime import datetime
-            session_name = f"Chat {datetime.now().strftime('%b %d, %H:%M')}"
-            sid = db.create_session(st.session_state.user_id, session_name)
-            if not sid:
-                st.error("Unable to create a new session. Please try again.")
-            else:
-                st.session_state.current_session_id = sid
-                st.session_state.messages = [
-                    {"role": "system", "content": "Assistant configured."}
-                ]
+        # Only render interactive sidebar buttons when NOT processing
+        if not st.session_state.is_processing:
+            if st.button("🚪 Logout", use_container_width=True):
+                # Clear session state
+                st.session_state.authenticated = False
+                st.session_state.user_id = None
+                st.session_state.username = None
+                st.session_state.current_session_id = None
+                st.session_state.messages = []
                 st.session_state.token_total = 0
                 st.session_state.limit_reached = False
-                st.session_state.show_dashboard = False
+                st.session_state.show_dashboard = True
                 st.rerun()
 
-        # Search
-        search_query = st.text_input("🔍 Search sessions", key="search_input")
+            if st.button("🏠 Dashboard", use_container_width=True):
+                st.session_state.current_session_id = None
+                st.session_state.show_dashboard = True
+                st.rerun()
 
-        # Filter sessions
-        sessions = db.search_sessions(st.session_state.user_id, search_query)
+            if st.button("➕ New Chat", use_container_width=True, type="primary"):
+                from datetime import datetime
+                session_name = f"Chat {datetime.now().strftime('%b %d, %H:%M')}"
+                sid = db.create_session(st.session_state.user_id, session_name)
+                if not sid:
+                    st.error("Unable to create a new session. Please try again.")
+                else:
+                    st.session_state.current_session_id = sid
+                    st.session_state.messages = [
+                        {"role": "system", "content": "Assistant configured."}
+                    ]
+                    st.session_state.token_total = 0
+                    st.session_state.limit_reached = False
+                    st.session_state.show_dashboard = False
+                    st.rerun()
 
-        if sessions:
-            st.markdown(f"### 📁 Sessions ({len(sessions)})")
+            # Search
+            search_query = st.text_input("🔍 Search sessions", key="search_input")
 
-            with st.container(height=435, border=True):
-                for session in sessions:
-                    session_id = session.get("id")
-                    is_current = session_id == st.session_state.current_session_id
-                    button_type = "primary" if is_current else "secondary"
-                    if st.button(
-                        f"💬 {session['session_name']}",
-                        key=f"session_{session_id}",
-                        use_container_width=True,
-                        type=button_type,
-                    ):
-                        st.session_state.current_session_id = session_id
-                        db_messages = db.get_session_messages(session_id)
-                        st.session_state.messages = [
-                            {"role": "system", "content": "Assistant configured."}
-                        ] + [
-                            {"role": msg["role"], "content": msg["content"]}
-                            for msg in db_messages
-                        ]
-                        st.session_state.token_total = recompute_token_total(st.session_state.messages)
-                        st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-                        st.rerun()
+            # Filter sessions
+            sessions = db.search_sessions(st.session_state.user_id, search_query)
+
+            if sessions:
+                st.markdown(f"### 📁 Sessions ({len(sessions)})")
+
+                with st.container(height=435, border=True):
+                    for session in sessions:
+                        session_id = session.get("id")
+                        is_current = session_id == st.session_state.current_session_id
+                        button_type = "primary" if is_current else "secondary"
+                        if st.button(
+                            f"💬 {session['session_name']}",
+                            key=f"session_{session_id}",
+                            use_container_width=True,
+                            type=button_type,
+                        ):
+                            st.session_state.current_session_id = session_id
+                            db_messages = db.get_session_messages(session_id)
+                            st.session_state.messages = [
+                                {"role": "system", "content": "Assistant configured."}
+                            ] + [
+                                {"role": msg["role"], "content": msg["content"]}
+                                for msg in db_messages
+                            ]
+                            st.session_state.token_total = recompute_token_total(st.session_state.messages)
+                            st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                            st.rerun()
+            else:
+                st.info("No sessions found")
         else:
-            st.info("No sessions found")
+            # Show disabled message when processing
+            st.info("⏳ Processing... sidebar disabled")
 
     # Main Chat Area
     if st.session_state.current_session_id:
@@ -295,43 +300,48 @@ else:
                 st.metric("Messages", msg_count)
 
             with col3:
-                options_prefix = f"session_options_{current_session['id']}"
-                rename_key = f"{options_prefix}_rename"
-                with st.popover("✏️ Options", use_container_width=True):
-                    default_name = current_session["session_name"]
-                    rename_value = st.text_input(
-                        "Rename session",
-                        value=default_name,
-                        key=rename_key,
-                    )
-                    if st.button("Save name", key=f"{options_prefix}_rename_save", use_container_width=True):
-                        final_name = (rename_value or default_name).strip()
-                        if final_name != default_name:
-                            db.rename_session(st.session_state.current_session_id, final_name)
-                        st.rerun()
+                # Only show Options popover when NOT processing
+                if not st.session_state.is_processing:
+                    options_prefix = f"session_options_{current_session['id']}"
+                    rename_key = f"{options_prefix}_rename"
+                    with st.popover("✏️ Options", use_container_width=True):
+                        default_name = current_session["session_name"]
+                        rename_value = st.text_input(
+                            "Rename session",
+                            value=default_name,
+                            key=rename_key,
+                        )
+                        if st.button("Save name", key=f"{options_prefix}_rename_save", use_container_width=True):
+                            final_name = (rename_value or default_name).strip()
+                            if final_name != default_name:
+                                db.rename_session(st.session_state.current_session_id, final_name)
+                            st.rerun()
 
-                    st.divider()
+                        st.divider()
 
-                    export_json = db.export_session_json(
-                        st.session_state.user_id,
-                        st.session_state.current_session_id,
-                    )
-                    st.download_button(
-                        "⬇️ Export",
-                        data=export_json,
-                        file_name=f"{current_session['session_name']}.json",
-                        mime="application/json",
-                        use_container_width=True,
-                        key=f"{options_prefix}_export",
-                    )
+                        export_json = db.export_session_json(
+                            st.session_state.user_id,
+                            st.session_state.current_session_id,
+                        )
+                        st.download_button(
+                            "⬇️ Export",
+                            data=export_json,
+                            file_name=f"{current_session['session_name']}.json",
+                            mime="application/json",
+                            use_container_width=True,
+                            key=f"{options_prefix}_export",
+                        )
 
-                    if st.button("🗑️ Delete session", key=f"{options_prefix}_delete", use_container_width=True):
-                        db.delete_session(st.session_state.current_session_id)
-                        st.session_state.current_session_id = None
-                        st.session_state.messages = []
-                        st.session_state.token_total = 0
-                        st.session_state.limit_reached = False
-                        st.rerun()
+                        if st.button("🗑️ Delete session", key=f"{options_prefix}_delete", use_container_width=True):
+                            db.delete_session(st.session_state.current_session_id)
+                            st.session_state.current_session_id = None
+                            st.session_state.messages = []
+                            st.session_state.token_total = 0
+                            st.session_state.limit_reached = False
+                            st.rerun()
+                else:
+                    # Show disabled button when processing
+                    st.button("✏️ Options", use_container_width=True, disabled=True)
 
             # Demo queries button for demo users
             if col4 is not None:
@@ -443,7 +453,7 @@ else:
             or st.session_state.show_meeting_builder
         )
         tool_button_label = "×" if any_assistant_open else "＋"
-        toggle_col, input_col = st.columns([0.03, 0.97], gap=None)
+        toggle_col, input_col = st.columns([0.03, 0.97], gap="small")  # Add ~1rem gap
 
         # Block interactions by not rendering interactive elements when processing
         # This is the Streamlit-native way - much more reliable than overlays
@@ -495,13 +505,13 @@ else:
                     "Please open a new session to continue."
                 )
             elif st.session_state.is_processing:
-                # Show a disabled/visual-only input when processing (matches button height)
+                # Show a disabled/visual-only input when processing (matches real chat input)
                 st.markdown(
                     """
                     <div style="
                         background-color: #f8f9fa;
                         border: 1px solid #dfe1e6;
-                        border-radius: 0.5rem;
+                        border-radius: 1.5rem;
                         padding: 0.5rem 1rem;
                         height: 38px;
                         color: #a0a0a0;
