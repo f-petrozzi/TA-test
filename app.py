@@ -528,8 +528,13 @@ else:
                     st.rerun()
                 else:
                     # Already processing - execute regeneration
-                    st.session_state.pending_regen = False
                     last_user = st.session_state.messages[-1]["content"]
+                    regen_id = hash(("regen", last_user))
+
+                    # Check if we've already started this regeneration
+                    if st.session_state.get("processing_regen_id") != regen_id:
+                        # First time processing this regeneration
+                        st.session_state.processing_regen_id = regen_id
 
                     with chat_col:
                         # Show thinking indicator
@@ -573,6 +578,8 @@ else:
                         {"query": last_user, "response": final_text, "chunks": matched_chunks},
                     )
                     maybe_auto_open_assistant(final_text)
+                    st.session_state.pending_regen = False
+                    st.session_state.processing_regen_id = None
                     st.session_state.is_processing = False
                     st.rerun()
 
@@ -589,28 +596,57 @@ else:
 
         # Process pending user input
         if st.session_state.is_processing and st.session_state.pending_user_input:
-            handle_pending_action_collapses()
-            clean = sanitize_user_input(st.session_state.pending_user_input)
-            # Clear pending input immediately to prevent reprocessing on reruns
-            st.session_state.pending_user_input = None
+            # Generate a unique ID for this input to prevent duplicate processing
+            current_input = st.session_state.pending_user_input
+            input_id = hash(current_input)
 
-            in_toks = estimate_tokens(clean)
-            st.session_state.messages.append({"role": "user", "content": clean})
-            db.add_message(
-                st.session_state.current_session_id,
-                "user",
-                clean,
-                tokens_in=in_toks,
-            )
+            # Check if we've already started processing this input
+            if st.session_state.get("processing_input_id") == input_id:
+                # Already processing this input - rerun interrupted us, so continue
+                clean = st.session_state.get("processing_query", "")
+                if not clean:
+                    # Safety: shouldn't happen, but if it does, clear and restart
+                    st.session_state.pending_user_input = None
+                    st.session_state.processing_input_id = None
+                    st.session_state.processing_query = None
+                    st.session_state.processing_tokens_in = None
+                    st.session_state.processing_cached_result = None
+                    st.session_state.is_processing = False
+                    st.rerun()
+                # Messages already added, just render UI
+                in_toks = st.session_state.get("processing_tokens_in", 0)
+                with chat_col:
+                    with st.chat_message("user"):
+                        st.write(clean)
+                    # Show thinking indicator
+                    with st.chat_message("assistant"):
+                        thinking_placeholder = st.empty()
+                        thinking_placeholder.markdown("Thinking...")
+            else:
+                # First time processing this input
+                handle_pending_action_collapses()
+                clean = sanitize_user_input(current_input)
+                st.session_state.processing_input_id = input_id
+                st.session_state.processing_query = clean
 
-            with chat_col:
-                with st.chat_message("user"):
-                    st.write(clean)
+                in_toks = estimate_tokens(clean)
+                st.session_state.processing_tokens_in = in_toks
+                st.session_state.messages.append({"role": "user", "content": clean})
+                db.add_message(
+                    st.session_state.current_session_id,
+                    "user",
+                    clean,
+                    tokens_in=in_toks,
+                )
 
-                # Show thinking indicator
-                with st.chat_message("assistant"):
-                    thinking_placeholder = st.empty()
-                    thinking_placeholder.markdown("Thinking...")
+                with chat_col:
+                    with st.chat_message("user"):
+                        st.write(clean)
+
+                    # Show thinking indicator
+                    with st.chat_message("assistant"):
+                        thinking_placeholder = st.empty()
+                        thinking_placeholder.markdown("Thinking...")
 
             # Check for injection
             if is_injection(clean):
@@ -632,29 +668,50 @@ else:
                     "injection_blocked",
                     {"prompt": clean, "response": warn},
                 )
+                st.session_state.pending_user_input = None
+                st.session_state.processing_input_id = None
+                st.session_state.processing_query = None
+                st.session_state.processing_tokens_in = None
+                st.session_state.processing_cached_result = None
                 st.session_state.is_processing = False
                 st.rerun()
 
-            # Generate response with RAG
-            streamer = SmoothStreamer(thinking_placeholder)
-            final_text = None
-            matched_chunks = []
-            last_chunk = ""
+            # Generate response with RAG (or use cached result)
+            cached_result = st.session_state.get("processing_cached_result")
+            if cached_result and cached_result.get("input_id") == st.session_state.processing_input_id:
+                # Use cached result from previous completed run
+                final_text = cached_result.get("text")
+                matched_chunks = cached_result.get("chunks", [])
+                thinking_placeholder.markdown(final_text)
+            else:
+                # Generate new result (or restart if interrupted)
+                streamer = SmoothStreamer(thinking_placeholder)
+                final_text = None
+                matched_chunks = []
+                last_chunk = ""
 
-            for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
-                text = payload.get("text", "")
-                if not text:
-                    continue
-                last_chunk = text
-                streamer.update(text)
-                if kind != "delta":
-                    final_text = text
-                    matched_chunks = payload.get("hits", [])
+                for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
+                    text = payload.get("text", "")
+                    if not text:
+                        continue
+                    last_chunk = text
+                    streamer.update(text)
+                    if kind != "delta":
+                        final_text = text
+                        matched_chunks = payload.get("hits", [])
 
-            streamer.finalize(final_text or last_chunk)
+                streamer.finalize(final_text or last_chunk)
 
-            if final_text is None:
-                final_text = last_chunk
+                if final_text is None:
+                    final_text = last_chunk
+
+                # Cache the result to prevent recomputation on future reruns
+                if final_text:
+                    st.session_state.processing_cached_result = {
+                        "input_id": st.session_state.processing_input_id,
+                        "text": final_text,
+                        "chunks": matched_chunks,
+                    }
 
             if final_text is None:
                 error_msg = "We weren't able to generate a response. Please try again."
@@ -672,6 +729,10 @@ else:
                     tokens_out=estimate_tokens(error_msg),
                 )
                 st.session_state.pending_user_input = None
+                st.session_state.processing_input_id = None
+                st.session_state.processing_query = None
+                st.session_state.processing_tokens_in = None
+                st.session_state.processing_cached_result = None
                 st.session_state.is_processing = False
                 st.rerun()
 
@@ -698,6 +759,8 @@ else:
             )
             maybe_auto_open_assistant(final_text)
             st.session_state.pending_user_input = None
+            st.session_state.processing_input_id = None
+            st.session_state.processing_query = None
             st.session_state.is_processing = False
             st.rerun()
 
