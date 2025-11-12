@@ -130,7 +130,7 @@ def render_meeting_builder(mcp_client, db) -> None:
         st.session_state.meeting_attendees_input = ""
         st.session_state.meeting_description_input = ""
         st.session_state.meeting_location_input = ""
-        st.session_state.meeting_timezone_input = "US/Eastern (ET)"
+        st.session_state.meeting_timezone_input = "US/Eastern (EST)"
         st.session_state.meeting_date_input = date.today()
         st.session_state.meeting_time_input = datetime.now().replace(second=0, microsecond=0).time()
         st.session_state.pending_meeting = None

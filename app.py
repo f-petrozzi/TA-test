@@ -363,8 +363,16 @@ else:
                 with st.chat_message(msg["role"]):
                     st.write(msg["content"])
 
+            # Only show regenerate button for regular query responses, not email/meeting outputs
             if history and history[-1]["role"] == "assistant":
-                if st.button("🔄 Regenerate Last Response", key="regen_button"):
+                # Check if this is a regular query response (not email/meeting related)
+                is_regular_query = not (
+                    st.session_state.show_email_builder or
+                    st.session_state.show_meeting_builder or
+                    st.session_state.pending_email or
+                    st.session_state.pending_meeting
+                )
+                if is_regular_query and st.button("🔄 Regenerate Last Response", key="regen_button"):
                     st.session_state.messages.pop()
                     st.session_state.pending_regen = True
                     st.rerun()
@@ -478,10 +486,14 @@ else:
 
         # Handle user input
         if user_input:
-            # Store input and set processing state, then rerun to disable input
-            st.session_state.pending_user_input = user_input
-            st.session_state.is_processing = True
-            st.rerun()
+            # Ignore input if already processing to prevent duplicates
+            if st.session_state.is_processing:
+                st.rerun()
+            else:
+                # Store input and set processing state, then rerun to disable input
+                st.session_state.pending_user_input = user_input
+                st.session_state.is_processing = True
+                st.rerun()
 
         # Process pending user input
         if st.session_state.is_processing and st.session_state.pending_user_input:
