@@ -588,43 +588,54 @@ else:
                 mcp_client.log_interaction(st.session_state.current_session_id, "injection_blocked", {"prompt": clean, "response": warn})
             else:
                 # Generate new response
-                streamer = SmoothStreamer(thinking_placeholder)
-                final_text = None
-                matched_chunks = []
-                last_chunk = ""
+                try:
+                    streamer = SmoothStreamer(thinking_placeholder)
+                    final_text = None
+                    matched_chunks = []
+                    last_chunk = ""
 
-                for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
-                    text = payload.get("text", "")
-                    if not text:
-                        continue
-                    last_chunk = text
-                    streamer.update(text)
-                    if kind != "delta":
-                        final_text = text
-                        matched_chunks = payload.get("hits", [])
+                    for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
+                        text = payload.get("text", "")
+                        if not text:
+                            continue
+                        last_chunk = text
+                        streamer.update(text)
+                        if kind != "delta":
+                            final_text = text
+                            matched_chunks = payload.get("hits", [])
 
-                streamer.finalize(final_text or last_chunk)
-                if final_text is None:
-                    final_text = last_chunk
+                    streamer.finalize(final_text or last_chunk)
+                    if final_text is None:
+                        final_text = last_chunk
 
-                if final_text:
-                    out_toks = estimate_tokens(final_text)
+                    if final_text:
+                        out_toks = estimate_tokens(final_text)
+                        st.session_state.token_total += (in_toks + out_toks)
+                        st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                        st.session_state.messages.append({"role": "assistant", "content": final_text})
+                        db.add_message(st.session_state.current_session_id, "assistant", final_text, tokens_out=out_toks)
+                        mcp_client.log_interaction(
+                            st.session_state.current_session_id,
+                            "regenerate_response",
+                            {"prompt": clean, "response": final_text, "chunks": matched_chunks, "tokens_in": in_toks, "tokens_out": out_toks}
+                        )
+                        maybe_auto_open_assistant(final_text)
+                    else:
+                        error_msg = "We weren't able to generate a response. Please try again."
+                        thinking_placeholder.markdown(error_msg)
+                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                        db.add_message(st.session_state.current_session_id, "assistant", error_msg, tokens_out=estimate_tokens(error_msg))
+                        mcp_client.log_interaction(st.session_state.current_session_id, "assistant_error", {"prompt": clean, "error": "empty_response"})
+                except RuntimeError as e:
+                    # Catch content filter blocks and other Azure errors
+                    error_msg = str(e)
+                    thinking_placeholder.markdown(error_msg)
+                    out_toks = estimate_tokens(error_msg)
                     st.session_state.token_total += (in_toks + out_toks)
                     st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-                    st.session_state.messages.append({"role": "assistant", "content": final_text})
-                    db.add_message(st.session_state.current_session_id, "assistant", final_text, tokens_out=out_toks)
-                    mcp_client.log_interaction(
-                        st.session_state.current_session_id,
-                        "regenerate_response",
-                        {"prompt": clean, "response": final_text, "chunks": matched_chunks, "tokens_in": in_toks, "tokens_out": out_toks}
-                    )
-                    maybe_auto_open_assistant(final_text)
-                else:
-                    error_msg = "We weren't able to generate a response. Please try again."
-                    thinking_placeholder.markdown(error_msg)
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})
-                    db.add_message(st.session_state.current_session_id, "assistant", error_msg, tokens_out=estimate_tokens(error_msg))
-                    mcp_client.log_interaction(st.session_state.current_session_id, "assistant_error", {"prompt": clean, "error": "empty_response"})
+                    db.add_message(st.session_state.current_session_id, "assistant", error_msg, tokens_out=out_toks)
+                    mcp_client.log_interaction(st.session_state.current_session_id, "content_filter_block", {"prompt": clean, "error": error_msg})
 
             # Clear regeneration state
             st.session_state.pending_regen = False
@@ -747,43 +758,54 @@ else:
                 mcp_client.log_interaction(st.session_state.current_session_id, "injection_blocked", {"prompt": clean, "response": warn})
             else:
                 # Generate response with RAG
-                streamer = SmoothStreamer(thinking_placeholder)
-                final_text = None
-                matched_chunks = []
-                last_chunk = ""
+                try:
+                    streamer = SmoothStreamer(thinking_placeholder)
+                    final_text = None
+                    matched_chunks = []
+                    last_chunk = ""
 
-                for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
-                    text = payload.get("text", "")
-                    if not text:
-                        continue
-                    last_chunk = text
-                    streamer.update(text)
-                    if kind != "delta":
-                        final_text = text
-                        matched_chunks = payload.get("hits", [])
+                    for kind, payload in generate_with_rag(clean, mcp_client=mcp_client):
+                        text = payload.get("text", "")
+                        if not text:
+                            continue
+                        last_chunk = text
+                        streamer.update(text)
+                        if kind != "delta":
+                            final_text = text
+                            matched_chunks = payload.get("hits", [])
 
-                streamer.finalize(final_text or last_chunk)
-                if final_text is None:
-                    final_text = last_chunk
+                    streamer.finalize(final_text or last_chunk)
+                    if final_text is None:
+                        final_text = last_chunk
 
-                if final_text:
-                    out_toks = estimate_tokens(final_text)
+                    if final_text:
+                        out_toks = estimate_tokens(final_text)
+                        st.session_state.token_total += (in_toks + out_toks)
+                        st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
+                        st.session_state.messages.append({"role": "assistant", "content": final_text})
+                        db.add_message(st.session_state.current_session_id, "assistant", final_text, tokens_out=out_toks)
+                        mcp_client.log_interaction(
+                            st.session_state.current_session_id,
+                            "assistant_reply",
+                            {"prompt": clean, "response": final_text, "chunks": matched_chunks, "tokens_in": in_toks, "tokens_out": out_toks}
+                        )
+                        maybe_auto_open_assistant(final_text)
+                    else:
+                        error_msg = "We weren't able to generate a response. Please try again."
+                        thinking_placeholder.markdown(error_msg)
+                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                        db.add_message(st.session_state.current_session_id, "assistant", error_msg, tokens_out=estimate_tokens(error_msg))
+                        mcp_client.log_interaction(st.session_state.current_session_id, "assistant_error", {"prompt": clean, "error": "empty_response"})
+                except RuntimeError as e:
+                    # Catch content filter blocks and other Azure errors
+                    error_msg = str(e)
+                    thinking_placeholder.markdown(error_msg)
+                    out_toks = estimate_tokens(error_msg)
                     st.session_state.token_total += (in_toks + out_toks)
                     st.session_state.limit_reached = st.session_state.token_total >= SESSION_TOKEN_LIMIT
-                    st.session_state.messages.append({"role": "assistant", "content": final_text})
-                    db.add_message(st.session_state.current_session_id, "assistant", final_text, tokens_out=out_toks)
-                    mcp_client.log_interaction(
-                        st.session_state.current_session_id,
-                        "assistant_reply",
-                        {"prompt": clean, "response": final_text, "chunks": matched_chunks, "tokens_in": in_toks, "tokens_out": out_toks}
-                    )
-                    maybe_auto_open_assistant(final_text)
-                else:
-                    error_msg = "We weren't able to generate a response. Please try again."
-                    thinking_placeholder.markdown(error_msg)
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})
-                    db.add_message(st.session_state.current_session_id, "assistant", error_msg, tokens_out=estimate_tokens(error_msg))
-                    mcp_client.log_interaction(st.session_state.current_session_id, "assistant_error", {"prompt": clean, "error": "empty_response"})
+                    db.add_message(st.session_state.current_session_id, "assistant", error_msg, tokens_out=out_toks)
+                    mcp_client.log_interaction(st.session_state.current_session_id, "content_filter_block", {"prompt": clean, "error": error_msg})
 
             # Clear processing state
             st.session_state.pending_user_input = None
