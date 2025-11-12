@@ -629,14 +629,9 @@ else:
             st.rerun()
 
         # Handle email draft generation - TWO PHASE APPROACH
-        # Phase 2: Process the pending email draft (UI already showing disabled state)
+        # Phase 2: Process the pending email draft (original function has its own message)
         if st.session_state.is_processing and st.session_state.get("pending_email_draft"):
             from agents.email_assistant import start_email_draft
-
-            with chat_col:
-                with st.chat_message("assistant"):
-                    st.markdown("✉️ Generating email draft...")
-
             params = st.session_state.pending_email_draft
             start_email_draft(mcp_client, db, params["to"], params["subject"], params["message"])
             st.session_state.pending_email_draft = None
@@ -644,14 +639,9 @@ else:
             st.rerun()
 
         # Handle email AI edit - TWO PHASE APPROACH
-        # Phase 2: Process the pending email edit (UI already showing disabled state)
+        # Phase 2: Process the pending email edit (original function has its own message)
         if st.session_state.is_processing and st.session_state.get("pending_email_edit"):
             from agents.email_assistant import apply_email_edit
-
-            with chat_col:
-                with st.chat_message("assistant"):
-                    st.markdown("✉️ Applying AI edit to email...")
-
             params = st.session_state.pending_email_edit
             apply_email_edit(mcp_client, db, params["instructions"])
             st.session_state.pending_email_edit = None
@@ -659,7 +649,7 @@ else:
             st.rerun()
 
         # Handle meeting planning - TWO PHASE APPROACH
-        # Phase 2: Process the pending meeting plan (UI already showing disabled state)
+        # Phase 2: Process the pending meeting plan
         if st.session_state.is_processing and st.session_state.get("pending_meeting_plan"):
             from agents.meeting_assistant import plan_meeting
 
@@ -682,14 +672,9 @@ else:
             st.rerun()
 
         # Handle meeting AI edit - TWO PHASE APPROACH
-        # Phase 2: Process the pending meeting edit (UI already showing disabled state)
+        # Phase 2: Process the pending meeting edit (original function has its own message)
         if st.session_state.is_processing and st.session_state.get("pending_meeting_edit"):
             from agents.meeting_assistant import apply_meeting_edit
-
-            with chat_col:
-                with st.chat_message("assistant"):
-                    st.markdown("📅 Applying AI edit to meeting...")
-
             params = st.session_state.pending_meeting_edit
             apply_meeting_edit(mcp_client, db, params["instructions"])
             st.session_state.pending_meeting_edit = None
