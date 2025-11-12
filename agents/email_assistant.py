@@ -88,7 +88,7 @@ def start_email_draft(mcp_client, db, to_addr: str, subject: str, student_msg: s
         "student_msg": student_msg,
     }
     st.session_state.email_draft_sync_value = cleaned_draft
-    st.session_state.show_email_builder = True
+    # Don't set show_email_builder here - let the handler manage it after processing
 
 
 def apply_email_edit(mcp_client, db, instructions: str) -> None:
@@ -141,7 +141,7 @@ def apply_email_edit(mcp_client, db, instructions: str) -> None:
     pending["body"] = revised
     st.session_state.pending_email = pending
     st.session_state.email_draft_sync_value = revised
-    st.session_state.show_email_builder = True
+    # Don't set show_email_builder here - let the handler manage it after processing
 
 
 def save_manual_email_edit(text: str) -> bool:

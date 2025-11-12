@@ -75,7 +75,7 @@ def plan_meeting(
             "suggested": suggested,
         },
     )
-    st.session_state.show_meeting_builder = True
+    # Don't set show_meeting_builder here - let the handler manage it after processing
 
 
 def create_meeting_event(mcp_client, db) -> None:
@@ -197,7 +197,7 @@ def apply_meeting_edit(mcp_client, db, instructions: str) -> None:
         "meeting_edit",
         {"instructions": instructions, "notes": revised_notes},
     )
-    st.session_state.show_meeting_builder = True
+    # Don't set show_meeting_builder here - let the handler manage it after processing
 
 
 def save_manual_meeting_edit(text: str) -> bool:
