@@ -187,20 +187,37 @@ def render_meeting_builder(mcp_client, db) -> None:
             f"**Location:** {plan.get('location') or 'TBD'}"
         )
 
-        if plan.get("ai_notes"):
-            st.caption(plan["ai_notes"])
-
         if plan.get("suggested"):
             st.caption(f"Suggested alternative: {plan['suggested']}")
 
-        col1, col2 = st.columns(2)
+        # Sync meeting notes from AI
+        if st.session_state.meeting_notes_sync_value is not None:
+            st.session_state.meeting_notes_text = st.session_state.meeting_notes_sync_value
+            st.session_state.meeting_notes_sync_value = None
 
-        if col1.button("Create Event", key="btn_meeting_create", use_container_width=True):
+        st.text_area("Meeting Description / Notes (editable)", key="meeting_notes_text", height=180)
+        st.text_input("AI edit instructions (optional)", key="meeting_edit_instructions")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        if col1.button("Apply AI Edit", key="btn_meeting_ai_edit"):
+            from utils.meeting_assistant import apply_meeting_edit
+            apply_meeting_edit(mcp_client, db, st.session_state.meeting_edit_instructions)
+            st.rerun()
+
+        if col2.button("Save Manual Edit", key="btn_meeting_manual_edit"):
+            from utils.meeting_assistant import save_manual_meeting_edit
+            if save_manual_meeting_edit(st.session_state.meeting_notes_text):
+                st.success("Meeting notes updated.")
+
+        if col3.button("Create Event", key="btn_meeting_create", use_container_width=True):
             create_meeting_event(mcp_client, db)
             st.rerun()
 
-        if col2.button("Clear Plan", key="btn_meeting_clear", use_container_width=True):
+        if col4.button("Clear Plan", key="btn_meeting_clear", use_container_width=True):
             st.session_state.pending_meeting = None
+            st.session_state.meeting_notes_text = ""
+            st.session_state.meeting_notes_sync_value = None
             st.rerun()
     else:
         st.info("No meeting plan yet. Enter details above and click Check Availability.")

@@ -63,10 +63,16 @@ def initialize_session_state() -> None:
         datetime.now().replace(second=0, microsecond=0).time(),
     )
     st.session_state.setdefault("meeting_fields_reset_pending", False)
+    st.session_state.setdefault("meeting_notes_text", "")
+    st.session_state.setdefault("meeting_notes_sync_value", None)
+    st.session_state.setdefault("meeting_edit_instructions", "")
 
     # Action tracking
     st.session_state.setdefault("recent_actions", [])
     st.session_state.setdefault("pending_action_collapses", [])
+
+    # Processing state (for disabling input during bot response)
+    st.session_state.setdefault("is_processing", False)
 
     # Dashboard
     st.session_state.setdefault("show_dashboard", True)
