@@ -451,14 +451,15 @@ else:
                     st.session_state.pending_meeting
                 )
                 if is_regular_query:
-                    # Only show regenerate button when NOT processing and NOT already regenerating
-                    if not st.session_state.is_processing and not st.session_state.get("pending_regen", False):
+                    if not st.session_state.is_processing:
                         if st.button("🔄 Regenerate Last Response", key="regen_button"):
                             st.session_state.messages.pop()
                             st.session_state.pending_regen = True
                             st.rerun()
+                    else:
+                        st.button("🔄 Regenerate Last Response", key="regen_button", disabled=True)
 
-            # Render assistants (completely hide when processing)
+            # Render assistants (don't render when processing to prevent graying out)
             if st.session_state.show_tool_picker and not st.session_state.is_processing:
                 with st.chat_message("assistant"):
                     render_tool_picker()
@@ -503,22 +504,21 @@ else:
                         st.session_state.show_tool_picker = True
                     st.rerun()
             else:
-                # Show disabled button when processing - using Streamlit default disabled styling
+                # Show disabled button when processing - custom HTML to match original styling
                 st.markdown(
                     f"""
                     <div style="
-                        background-color: rgb(240, 242, 246);
-                        border: 1px solid rgb(230, 234, 241);
+                        background-color: #f0f2f6;
+                        border: 1px solid #dfe1e6;
                         border-radius: 0.5rem;
                         padding: 0.5rem;
                         text-align: center;
-                        color: rgba(49, 51, 63, 0.4);
+                        color: #a0a0a0;
                         cursor: not-allowed;
                         height: 38px;
                         display: flex;
                         align-items: center;
                         justify-content: center;
-                        font-weight: 400;
                     ">{tool_button_label}</div>
                     """,
                     unsafe_allow_html=True
@@ -533,23 +533,22 @@ else:
                     "Please open a new session to continue."
                 )
             elif st.session_state.is_processing:
-                # Show disabled text input when processing - using Streamlit default disabled styling with pill shape
+                # Show disabled text input when processing - custom HTML to match original styling
                 st.markdown(
                     """
                     <div style="
-                        background-color: rgb(240, 242, 246);
-                        border: 1px solid rgb(230, 234, 241);
+                        background-color: #f8f9fa;
+                        border: 1px solid #dfe1e6;
                         border-radius: 1.5rem;
                         padding: 0.5rem 1rem;
                         height: 38px;
-                        color: rgba(49, 51, 63, 0.4);
+                        color: #a0a0a0;
                         cursor: not-allowed;
                         font-family: 'Source Sans Pro', sans-serif;
                         display: flex;
                         align-items: center;
                         box-sizing: border-box;
-                        margin-left: 0.75rem;
-                        font-weight: 400;
+                        margin-left: 0.5rem;
                     ">Ask the USF Campus Concierge...</div>
                     """,
                     unsafe_allow_html=True
