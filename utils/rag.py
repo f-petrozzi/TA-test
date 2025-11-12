@@ -152,43 +152,57 @@ def _fetch_neighbor_chunks(base_hits: List[Dict[str, Any]], radius: int) -> Dict
     if not doc_map:
         return {}
 
+    # Batch all chunk fetches into a single query instead of one per document
     client = get_supabase_client()
     neighbors: Dict[Tuple[str, int], Dict[str, Any]] = {}
-    for doc_id, indices in doc_map.items():
-        wanted = sorted(i for i in indices if i is not None and i >= 0)
-        if not wanted:
-            continue
-        try:
+
+    try:
+        # Build OR conditions for each (document_id, chunk_index list) pair
+        or_conditions = []
+        for doc_id, indices in doc_map.items():
+            wanted = sorted(i for i in indices if i is not None and i >= 0)
+            if wanted:
+                # Format: "and(document_id.eq.doc1,chunk_index.in.(1,2,3))"
+                indices_str = ",".join(str(i) for i in wanted)
+                or_conditions.append(f"and(document_id.eq.{doc_id},chunk_index.in.({indices_str}))")
+
+        if or_conditions:
+            # Combine all conditions with OR
+            or_filter = ",".join(or_conditions)
             resp = (
                 client.table(SUPABASE_CHUNKS_TABLE)
                 .select("id, document_id, chunk_index, content, section_title, metadata, filename, category, canonical")
-                .eq("document_id", doc_id)
-                .in_("chunk_index", wanted)
+                .or_(or_filter)
                 .execute()
             )
-        except Exception:
-            continue
-        rows = getattr(resp, "data", []) or []
-        for row in rows:
-            meta = row.get("metadata") or {}
-            merged_meta = {
-                **meta,
-                "section_title": row.get("section_title") or meta.get("section_title"),
-                "filename": row.get("filename") or meta.get("filename"),
-                "category": row.get("category") or meta.get("category"),
-                "canonical": row.get("canonical") or meta.get("canonical"),
-                "chunk_id": row.get("id") or meta.get("id"),
-                "document_id": row.get("document_id") or meta.get("document_id"),
-                "chunk_index": row.get("chunk_index"),
-            }
-            neighbors[(doc_id, row.get("chunk_index"))] = {
-                "doc": row.get("content") or "",
-                "meta": merged_meta,
-                "score": None,
-                "document_id": merged_meta.get("document_id"),
-                "chunk_index": merged_meta.get("chunk_index"),
-                "is_neighbor": True,
-            }
+
+            rows = getattr(resp, "data", []) or []
+            for row in rows:
+                doc_id = row.get("document_id")
+                chunk_index = row.get("chunk_index")
+                meta = row.get("metadata") or {}
+                merged_meta = {
+                    **meta,
+                    "section_title": row.get("section_title") or meta.get("section_title"),
+                    "filename": row.get("filename") or meta.get("filename"),
+                    "category": row.get("category") or meta.get("category"),
+                    "canonical": row.get("canonical") or meta.get("canonical"),
+                    "chunk_id": row.get("id") or meta.get("id"),
+                    "document_id": doc_id,
+                    "chunk_index": chunk_index,
+                }
+                neighbors[(doc_id, chunk_index)] = {
+                    "doc": row.get("content") or "",
+                    "meta": merged_meta,
+                    "score": None,
+                    "document_id": doc_id,
+                    "chunk_index": chunk_index,
+                    "is_neighbor": True,
+                }
+    except Exception:
+        # If batched query fails, return what we have
+        pass
+
     return neighbors
 
 
