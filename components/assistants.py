@@ -136,46 +136,51 @@ def render_meeting_builder(mcp_client, db) -> None:
         st.session_state.pending_meeting = None
         st.session_state.meeting_fields_reset_pending = False
 
-    # Input fields
-    st.text_input("Meeting Summary", key="meeting_summary_input")
+    plan = st.session_state.pending_meeting
 
-    col_dt, col_tm = st.columns(2)
-    col_dt.date_input("Meeting Date", key="meeting_date_input")
-    col_tm.time_input("Start Time", key="meeting_time_input", step=300)
+    # Show input form only if no plan exists
+    if not plan:
+        # Input fields
+        st.text_input("Meeting Summary", key="meeting_summary_input")
 
-    st.selectbox("Timezone", options=list(MEETING_TIMEZONE_OFFSETS.keys()), key="meeting_timezone_input")
-    st.number_input("Duration (minutes)", min_value=15, max_value=240, key="meeting_duration_input")
-    st.text_input("Attendees (comma-separated)", key="meeting_attendees_input")
-    st.text_input("Location (optional)", key="meeting_location_input")
-    st.text_area("Description / Notes", key="meeting_description_input", height=120)
+        col_dt, col_tm = st.columns(2)
+        col_dt.date_input("Meeting Date", key="meeting_date_input")
+        col_tm.time_input("Start Time", key="meeting_time_input", step=300)
 
-    col_check, col_reset = st.columns([3, 1])
+        st.selectbox("Timezone", options=list(MEETING_TIMEZONE_OFFSETS.keys()), key="meeting_timezone_input")
+        st.number_input("Duration (minutes)", min_value=15, max_value=240, key="meeting_duration_input")
+        st.text_input("Attendees (comma-separated)", key="meeting_attendees_input")
+        st.text_input("Location (optional)", key="meeting_location_input")
+        st.text_area("Description / Notes", key="meeting_description_input", height=120)
 
-    if col_check.button("Check Availability / Update Plan", key="btn_meeting_plan", use_container_width=True):
-        start_iso = build_start_iso(
-            st.session_state.meeting_date_input,
-            st.session_state.meeting_time_input,
-            st.session_state.meeting_timezone_input,
-        )
-        plan_meeting(
-            mcp_client,
-            db,
-            st.session_state.meeting_summary_input,
-            start_iso,
-            int(st.session_state.meeting_duration_input),
-            st.session_state.meeting_attendees_input,
-            st.session_state.meeting_description_input,
-            st.session_state.meeting_location_input,
-        )
-        st.rerun()
+        col_check, col_reset = st.columns([3, 1])
 
-    if col_reset.button("Reset Fields", key="btn_meeting_reset", use_container_width=True):
-        st.session_state.meeting_fields_reset_pending = True
-        st.rerun()
+        if col_check.button("Check Availability / Update Plan", key="btn_meeting_plan", use_container_width=True):
+            start_iso = build_start_iso(
+                st.session_state.meeting_date_input,
+                st.session_state.meeting_time_input,
+                st.session_state.meeting_timezone_input,
+            )
+            plan_meeting(
+                mcp_client,
+                db,
+                st.session_state.meeting_summary_input,
+                start_iso,
+                int(st.session_state.meeting_duration_input),
+                st.session_state.meeting_attendees_input,
+                st.session_state.meeting_description_input,
+                st.session_state.meeting_location_input,
+            )
+            st.rerun()
+
+        if col_reset.button("Reset Fields", key="btn_meeting_reset", use_container_width=True):
+            st.session_state.meeting_fields_reset_pending = True
+            st.rerun()
+
+        st.info("No meeting plan yet. Enter details above and click Check Availability.")
 
     # Meeting plan display (only if plan exists)
-    plan = st.session_state.pending_meeting
-    if plan:
+    else:
         status = "✅ Slot is free" if plan.get("slot_free") else "⚠️ Slot is busy"
         st.info(status)
 
@@ -216,8 +221,6 @@ def render_meeting_builder(mcp_client, db) -> None:
 
         if col4.button("Clear Plan", key="btn_meeting_clear", use_container_width=True):
             st.session_state.pending_meeting = None
-            st.session_state.meeting_notes_text = ""
+            # Don't modify widget keys directly - they'll be cleared when widget isn't rendered
             st.session_state.meeting_notes_sync_value = None
             st.rerun()
-    else:
-        st.info("No meeting plan yet. Enter details above and click Check Availability.")

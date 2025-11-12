@@ -51,16 +51,14 @@ def start_email_draft(mcp_client, db, to_addr: str, subject: str, student_msg: s
 
     in_toks = estimate_tokens(student_msg)
 
-    with st.chat_message("assistant"):
-        st.markdown(f"✉️ Drafting reply to **{to_addr}** ...")
-        placeholder = st.empty()
-        drafted = draft_email_via_mcp(
-            mcp_client,
-            db,
-            student_msg,
-            subject=subject,
-            placeholder=placeholder,
-        )
+    # Draft email without showing in chat history
+    drafted = draft_email_via_mcp(
+        mcp_client,
+        db,
+        student_msg,
+        subject=subject,
+        placeholder=None,
+    )
 
     if not drafted:
         return
@@ -74,26 +72,14 @@ def start_email_draft(mcp_client, db, to_addr: str, subject: str, student_msg: s
     if subject:
         st.session_state.email_subject_sync_value = subject
 
-    # Show sources in chat history but not in draft box
-    chat_content = cleaned_draft
-    if sources:
-        chat_content = f"{cleaned_draft}\n\n**Sources**\n{sources}"
-
-    out_toks = estimate_tokens(chat_content)
-    st.session_state.messages.append({"role": "assistant", "content": chat_content})
-    db.add_message(
-        st.session_state.current_session_id,
-        "assistant",
-        chat_content,
-        tokens_out=out_toks,
-    )
+    # Log interaction but don't add to chat history
     mcp_client.log_interaction(
         st.session_state.current_session_id,
         "email_draft",
         {"to": to_addr, "subject": subject, "draft": cleaned_draft, "chunks": matched_chunks},
     )
 
-    st.session_state.token_total += in_toks + out_toks
+    st.session_state.token_total += in_toks
     st.session_state.pending_email = {
         "to": to_addr,
         "subject": subject,
@@ -116,18 +102,16 @@ def apply_email_edit(mcp_client, db, instructions: str) -> None:
         st.warning("Enter edit instructions before applying an AI edit.")
         return
 
-    with st.chat_message("assistant"):
-        st.markdown("✏️ Updating the email draft …")
-        placeholder = st.empty()
-        drafted = draft_email_via_mcp(
-            mcp_client,
-            db,
-            pending.get("student_msg", ""),
-            subject=pending.get("subject"),
-            instructions=instructions,
-            previous_draft=pending.get("body", ""),
-            placeholder=placeholder,
-        )
+    # Update email draft without showing in chat history
+    drafted = draft_email_via_mcp(
+        mcp_client,
+        db,
+        pending.get("student_msg", ""),
+        subject=pending.get("subject"),
+        instructions=instructions,
+        previous_draft=pending.get("body", ""),
+        placeholder=None,
+    )
 
     if not drafted:
         return
@@ -141,19 +125,7 @@ def apply_email_edit(mcp_client, db, instructions: str) -> None:
         pending["subject"] = new_subject
         st.session_state.email_subject_sync_value = new_subject
 
-    # Show sources in chat history but not in draft box
-    chat_content = revised
-    if sources:
-        chat_content = f"{revised}\n\n**Sources**\n{sources}"
-
-    out_toks = estimate_tokens(chat_content)
-    st.session_state.messages.append({"role": "assistant", "content": chat_content})
-    db.add_message(
-        st.session_state.current_session_id,
-        "assistant",
-        chat_content,
-        tokens_out=out_toks,
-    )
+    # Log interaction but don't add to chat history
     mcp_client.log_interaction(
         st.session_state.current_session_id,
         "email_edit",
@@ -164,8 +136,6 @@ def apply_email_edit(mcp_client, db, instructions: str) -> None:
             "chunks": drafted.get("context_hits", []),
         },
     )
-
-    st.session_state.token_total += out_toks
     pending["body"] = revised
     st.session_state.pending_email = pending
     st.session_state.email_draft_sync_value = revised
