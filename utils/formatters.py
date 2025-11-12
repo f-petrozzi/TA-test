@@ -21,7 +21,7 @@ _SUBJECT_PREFIX = re.compile(
 
 
 def format_est_timestamp(raw: str | None) -> str:
-    """Convert ISO timestamp to EST format like 'Jan 15, 03:45 PM ET'."""
+    """Convert ISO timestamp to EST format like 'Jan 15, 03:45 PM EST'."""
     if not raw:
         return "Unknown"
     text = raw.strip()
@@ -33,7 +33,7 @@ def format_est_timestamp(raw: str | None) -> str:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         est_dt = dt.astimezone(EASTERN)
-        return est_dt.strftime("%b %d, %I:%M %p ET")
+        return est_dt.strftime("%b %d, %I:%M %p EST")
     except ValueError:
         return text
 

@@ -57,42 +57,50 @@ def render_email_builder(mcp_client, db) -> None:
         st.session_state.email_draft_text = ""
         st.session_state.email_subject_sync_value = None
         st.session_state.email_draft_sync_value = ""
+        st.session_state.pending_email = None
         st.session_state.email_fields_reset_pending = False
 
-    # Sync subject from AI
-    if st.session_state.email_subject_sync_value is not None:
-        st.session_state.email_subject_input = st.session_state.email_subject_sync_value
-        st.session_state.email_subject_sync_value = None
+    pending = st.session_state.pending_email
 
-    # Input fields
-    st.text_input("Student Email", key="email_to_input")
-    st.text_input("Subject", key="email_subject_input")
-    st.text_area("Student Inquiry / Notes", key="email_student_message", height=120)
+    # Show input form only if no draft exists
+    if not pending:
+        # Sync subject from AI
+        if st.session_state.email_subject_sync_value is not None:
+            st.session_state.email_subject_input = st.session_state.email_subject_sync_value
+            st.session_state.email_subject_sync_value = None
 
-    col_generate, col_reset = st.columns([3, 1])
+        # Input fields
+        st.text_input("Student Email", key="email_to_input")
+        st.text_input("Subject", key="email_subject_input")
+        st.text_area("Student Inquiry / Notes", key="email_student_message", height=120)
 
-    if col_generate.button("Generate Draft", key="btn_email_generate", use_container_width=True):
-        start_email_draft(
-            mcp_client,
-            db,
-            st.session_state.email_to_input,
-            st.session_state.email_subject_input,
-            st.session_state.email_student_message,
-        )
-        st.rerun()
+        col_generate, col_reset = st.columns([3, 1])
 
-    if col_reset.button("Reset Fields", key="btn_email_reset", use_container_width=True):
-        st.session_state.pending_email = None
-        st.session_state.email_fields_reset_pending = True
-        st.rerun()
+        if col_generate.button("Generate Draft", key="btn_email_generate", use_container_width=True):
+            start_email_draft(
+                mcp_client,
+                db,
+                st.session_state.email_to_input,
+                st.session_state.email_subject_input,
+                st.session_state.email_student_message,
+            )
+            st.rerun()
+
+        if col_reset.button("Reset Fields", key="btn_email_reset", use_container_width=True):
+            st.session_state.email_fields_reset_pending = True
+            st.rerun()
+
+        st.info("No draft generated yet. Enter details above and click Generate Draft.")
 
     # Draft editor (only if draft exists)
-    pending = st.session_state.pending_email
-    if pending:
+    else:
         # Sync draft from AI
         if st.session_state.email_draft_sync_value is not None:
             st.session_state.email_draft_text = st.session_state.email_draft_sync_value
             st.session_state.email_draft_sync_value = None
+
+        st.markdown(f"**To:** {pending.get('to', '')}")
+        st.markdown(f"**Subject:** {pending.get('subject', '')}")
 
         st.text_area("Draft Body", key="email_draft_text", height=220)
         st.text_input("AI edit instructions (optional)", key="email_edit_instructions")
@@ -115,8 +123,6 @@ def render_email_builder(mcp_client, db) -> None:
             st.session_state.pending_email = None
             st.session_state.email_draft_sync_value = ""
             st.rerun()
-    else:
-        st.info("No draft generated yet.")
 
 
 def render_meeting_builder(mcp_client, db) -> None:
