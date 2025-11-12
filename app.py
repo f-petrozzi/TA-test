@@ -197,6 +197,11 @@ if not st.session_state.authenticated:
 else:
     # Sidebar
     with st.sidebar:
+        # Show processing message at top when processing
+        if st.session_state.is_processing:
+            st.info("⏳ Processing... elements disabled")
+            st.divider()
+
         st.markdown(f"### 👤 {st.session_state.username}")
 
         # Only render interactive sidebar elements when NOT processing
@@ -268,7 +273,7 @@ else:
             else:
                 st.info("No sessions found")
         else:
-            # Show disabled buttons and message when processing
+            # Show disabled buttons when processing
             st.button("🚪 Logout", use_container_width=True, disabled=True)
             st.button("🏠 Dashboard", use_container_width=True, disabled=True)
             st.button("➕ New Chat", use_container_width=True, type="primary", disabled=True)
@@ -292,8 +297,6 @@ else:
                         )
             else:
                 st.info("No sessions found")
-
-            st.info("⏳ Processing... sidebar disabled")
 
     # Main Chat Area
     if st.session_state.current_session_id:
@@ -454,18 +457,67 @@ else:
                     st.session_state.pending_regen = True
                     st.rerun()
 
-            # Render assistants
-            if st.session_state.show_tool_picker:
+            # Render assistants (only when not processing to avoid graying out)
+            if st.session_state.show_tool_picker and not st.session_state.is_processing:
                 with st.chat_message("assistant"):
                     render_tool_picker()
 
-            if st.session_state.show_email_builder:
+            if st.session_state.show_email_builder and not st.session_state.is_processing:
                 with st.chat_message("assistant"):
                     render_email_builder(mcp_client, db)
 
-            if st.session_state.show_meeting_builder:
+            if st.session_state.show_meeting_builder and not st.session_state.is_processing:
                 with st.chat_message("assistant"):
                     render_meeting_builder(mcp_client, db)
+
+            # Handle email/meeting assistant processing - TWO PHASE APPROACH
+            # Phase 2: Process pending actions inside chat_col so messages render above input
+
+            # Email draft generation
+            if st.session_state.is_processing and st.session_state.get("pending_email_draft"):
+                from agents.email_assistant import start_email_draft
+                params = st.session_state.pending_email_draft
+                start_email_draft(mcp_client, db, params["to"], params["subject"], params["message"])
+                st.session_state.pending_email_draft = None
+                st.session_state.is_processing = False
+                st.rerun()
+
+            # Email AI edit
+            if st.session_state.is_processing and st.session_state.get("pending_email_edit"):
+                from agents.email_assistant import apply_email_edit
+                params = st.session_state.pending_email_edit
+                apply_email_edit(mcp_client, db, params["instructions"])
+                st.session_state.pending_email_edit = None
+                st.session_state.is_processing = False
+                st.rerun()
+
+            # Meeting planning
+            if st.session_state.is_processing and st.session_state.get("pending_meeting_plan"):
+                from agents.meeting_assistant import plan_meeting
+                with st.chat_message("assistant"):
+                    st.markdown("📅 Generating meeting plan...")
+                params = st.session_state.pending_meeting_plan
+                plan_meeting(
+                    mcp_client, db,
+                    params["summary"],
+                    params["start_iso"],
+                    params["duration"],
+                    params["attendees"],
+                    params["description"],
+                    params["location"],
+                )
+                st.session_state.pending_meeting_plan = None
+                st.session_state.is_processing = False
+                st.rerun()
+
+            # Meeting AI edit
+            if st.session_state.is_processing and st.session_state.get("pending_meeting_edit"):
+                from agents.meeting_assistant import apply_meeting_edit
+                params = st.session_state.pending_meeting_edit
+                apply_meeting_edit(mcp_client, db, params["instructions"])
+                st.session_state.pending_meeting_edit = None
+                st.session_state.is_processing = False
+                st.rerun()
 
         scroll_chat_to_bottom()
 
@@ -518,7 +570,21 @@ else:
                     "Please open a new session to continue."
                 )
             elif st.session_state.is_processing:
-                # Show disabled text input when processing - uses native Streamlit styling
+                # Show disabled text input when processing - add CSS to match real chat input
+                st.markdown(
+                    """
+                    <style>
+                    div[data-testid="stChatInput"] {
+                        margin-bottom: 1rem;
+                    }
+                    /* Match the spacing for disabled input */
+                    .stTextInput > div {
+                        margin-bottom: 0;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True,
+                )
                 st.text_input(
                     "chat_input_label",
                     value="Ask the USF Campus Concierge...",
@@ -601,54 +667,6 @@ else:
 
             # Clear regeneration state
             st.session_state.pending_regen = False
-            st.session_state.is_processing = False
-            st.rerun()
-
-        # Handle email draft generation - TWO PHASE APPROACH
-        # Phase 2: Process the pending email draft (UI already showing disabled state)
-        if st.session_state.is_processing and st.session_state.get("pending_email_draft"):
-            from agents.email_assistant import start_email_draft
-            params = st.session_state.pending_email_draft
-            start_email_draft(mcp_client, db, params["to"], params["subject"], params["message"])
-            st.session_state.pending_email_draft = None
-            st.session_state.is_processing = False
-            st.rerun()
-
-        # Handle email AI edit - TWO PHASE APPROACH
-        # Phase 2: Process the pending email edit (UI already showing disabled state)
-        if st.session_state.is_processing and st.session_state.get("pending_email_edit"):
-            from agents.email_assistant import apply_email_edit
-            params = st.session_state.pending_email_edit
-            apply_email_edit(mcp_client, db, params["instructions"])
-            st.session_state.pending_email_edit = None
-            st.session_state.is_processing = False
-            st.rerun()
-
-        # Handle meeting planning - TWO PHASE APPROACH
-        # Phase 2: Process the pending meeting plan (UI already showing disabled state)
-        if st.session_state.is_processing and st.session_state.get("pending_meeting_plan"):
-            from agents.meeting_assistant import plan_meeting
-            params = st.session_state.pending_meeting_plan
-            plan_meeting(
-                mcp_client, db,
-                params["summary"],
-                params["start_iso"],
-                params["duration"],
-                params["attendees"],
-                params["description"],
-                params["location"],
-            )
-            st.session_state.pending_meeting_plan = None
-            st.session_state.is_processing = False
-            st.rerun()
-
-        # Handle meeting AI edit - TWO PHASE APPROACH
-        # Phase 2: Process the pending meeting edit (UI already showing disabled state)
-        if st.session_state.is_processing and st.session_state.get("pending_meeting_edit"):
-            from agents.meeting_assistant import apply_meeting_edit
-            params = st.session_state.pending_meeting_edit
-            apply_meeting_edit(mcp_client, db, params["instructions"])
-            st.session_state.pending_meeting_edit = None
             st.session_state.is_processing = False
             st.rerun()
 
