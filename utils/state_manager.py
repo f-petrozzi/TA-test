@@ -69,15 +69,8 @@ def initialize_session_state() -> None:
     st.session_state.setdefault("recent_actions", [])
     st.session_state.setdefault("pending_action_collapses", [])
 
-    # Processing state (for disabling input during bot response)
+    # Processing state (for blocking all interactions during bot response)
     st.session_state.setdefault("is_processing", False)
-    st.session_state.setdefault("pending_user_input", None)
-    st.session_state.setdefault("processing_input_id", None)
-    st.session_state.setdefault("processing_query", None)
-    st.session_state.setdefault("processing_tokens_in", None)
-    st.session_state.setdefault("processing_cached_result", None)
-    st.session_state.setdefault("processing_response_saved", False)
-    st.session_state.setdefault("processing_regen_id", None)
 
     # Dashboard
     st.session_state.setdefault("show_dashboard", True)
