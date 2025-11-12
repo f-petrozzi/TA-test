@@ -76,7 +76,7 @@ _PROMPT_ATTACK_RULES: Tuple[_PromptRule, ...] = (
     _PromptRule(
         "system_prompt_exfil",
         re.compile(r"\b(show|reveal|expose|tell|give|provide|share|display|print|output|send|what|where|list)\b.{0,20}\b(is\s+|are\s+|me\s+)?(your\s+|the\s+)?(system|hidden)\b.{0,10}\b(prompt|context|instruction)", re.I),
-        0.9,
+        1.0,
         "Attempts to exfiltrate hidden prompts",
     ),
     _PromptRule(
