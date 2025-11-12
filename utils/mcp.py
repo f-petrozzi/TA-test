@@ -655,7 +655,7 @@ class SimpleMCPClient:
             cwd=str(self._server_cwd),
         )
 
-    def _call_tool(self, tool_name: str, arguments: dict[str, Any]):
+    def _call_tool(self, tool_name: str, arguments: dict[str, Any], timeout: float = 30.0):
         """
         Call MCP tool via stdio transport.
         Optimized to skip unnecessary list_tools() call.
@@ -665,12 +665,19 @@ class SimpleMCPClient:
 
         async def _call():
             # Create session for this call (subprocess reused if warm)
-            async with stdio_client(self._stdio_params) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    # Initialize MCP protocol
-                    await session.initialize()
-                    # Call tool directly (skip list_tools for speed)
-                    return await session.call_tool(tool_name, arguments)
+            try:
+                with anyio.fail_after(timeout):
+                    async with stdio_client(self._stdio_params) as (read_stream, write_stream):
+                        async with ClientSession(read_stream, write_stream) as session:
+                            # Initialize MCP protocol
+                            await session.initialize()
+                            # Call tool directly (skip list_tools for speed)
+                            return await session.call_tool(tool_name, arguments)
+            except TimeoutError as exc:
+                raise RuntimeError(
+                    f"MCP tool '{tool_name}' timed out after {timeout}s. "
+                    "The subprocess may be unresponsive or stuck."
+                ) from exc
 
         result = anyio.run(_call)
         if result.isError:

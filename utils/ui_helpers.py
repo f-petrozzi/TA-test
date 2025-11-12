@@ -131,7 +131,7 @@ def scroll_chat_to_bottom() -> None:
                         }}
                     }}
                 }} catch (err) {{
-                    console.debug('Scroll error:', err);
+                    // Silently handle scroll errors
                 }}
             }};
 
@@ -170,7 +170,7 @@ def scroll_chat_to_bottom() -> None:
                         }}, {{ passive: true }});
                     }}
                 }} catch (err) {{
-                    console.debug('Listener setup error:', err);
+                    // Silently handle listener setup errors
                 }}
             }};
 

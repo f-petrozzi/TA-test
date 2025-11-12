@@ -1,10 +1,13 @@
 import os
 import uuid
 import json
+import logging
 from datetime import datetime
 from typing import Any, Optional
 
 from utils.supabase_client import get_supabase_client
+
+logger = logging.getLogger(__name__)
 
 class ChatDatabase:
     """
@@ -40,7 +43,8 @@ class ChatDatabase:
             )
             if getattr(resp, "data", []):
                 return sid
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to create session: {e}")
             return None
         return None
 
@@ -54,7 +58,8 @@ class ChatDatabase:
                 .execute()
             )
             return getattr(resp, "data", []) or []
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to get user sessions for {user_id}: {e}")
             return []
 
     def get_session(self, session_id: str) -> Optional[dict]:
@@ -68,7 +73,8 @@ class ChatDatabase:
             )
             data = getattr(resp, "data", None)
             return data[0] if data else None
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to get session {session_id}: {e}")
             return None
 
     def rename_session(self, session_id: str, new_name: str) -> bool:
@@ -78,14 +84,16 @@ class ChatDatabase:
                 {"session_name": new_name, "updated_at": now}
             ).eq("id", session_id).execute()
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to rename session {session_id}: {e}")
             return False
 
     def delete_session(self, session_id: str) -> None:
         try:
             self._client.table(self._messages_table).delete().eq("session_id", session_id).execute()
             self._client.table(self._sessions_table).delete().eq("id", session_id).execute()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to delete session {session_id}: {e}")
             return
 
     # messages
@@ -99,7 +107,8 @@ class ChatDatabase:
                 .execute()
             )
             return getattr(resp, "data", []) or []
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to get session messages for {session_id}: {e}")
             return []
 
     def add_message(
@@ -127,7 +136,8 @@ class ChatDatabase:
                 {"updated_at": now}
             ).eq("id", session_id).execute()
             return mid
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to add message to session {session_id}: {e}")
             return None
 
     def get_total_message_count(self, user_id: str) -> int:
@@ -160,7 +170,8 @@ class ChatDatabase:
 
             # Get count from response
             return getattr(messages_resp, "count", 0) or 0
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to get total message count for user {user_id}: {e}")
             return 0
 
     # search/export
@@ -205,5 +216,6 @@ class ChatDatabase:
                 "created_at": datetime.utcnow().isoformat(timespec="seconds"),
             }
             self._client.table(self._audit_table).insert(record).execute()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to log audit event {event_type} for session {session_id}: {e}")
             return
