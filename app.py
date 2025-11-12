@@ -294,7 +294,20 @@ else:
         current_session = next((s for s in sessions if s.get("id") == st.session_state.current_session_id), None)
 
         if current_session:
-            col1, col2, col3 = st.columns([3, 1, 1])
+            # Check if user is a demo user
+            is_demo_user = st.session_state.username and st.session_state.username.startswith("DemoUser")
+            if is_demo_user:
+                try:
+                    user_num = int(st.session_state.username.replace("DemoUser", ""))
+                    is_demo_user = 1 <= user_num <= 20
+                except:
+                    is_demo_user = False
+
+            if is_demo_user:
+                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            else:
+                col1, col2, col3 = st.columns([3, 1, 1])
+                col4 = None
 
             with col1:
                 st.title(current_session["session_name"])
@@ -341,6 +354,57 @@ else:
                         st.session_state.token_total = 0
                         st.session_state.limit_reached = False
                         st.rerun()
+
+            # Demo queries button for demo users
+            if col4 is not None:
+                with col4:
+                    with st.popover("🧪 Demo", use_container_width=True):
+                        st.markdown("### Demo Queries")
+                        st.markdown("Copy and paste these queries to test the bot:")
+
+                        st.markdown("**Regular Bot:**")
+                        query1 = "What are the requirements to transfer to USF?"
+                        query2 = "How do I register for orientation?"
+
+                        if st.button("📋 Copy Query 1", key="demo_regular_1", use_container_width=True):
+                            st.code(query1, language=None)
+                        st.caption(query1)
+
+                        if st.button("📋 Copy Query 2", key="demo_regular_2", use_container_width=True):
+                            st.code(query2, language=None)
+                        st.caption(query2)
+
+                        st.divider()
+                        st.markdown("**Email Bot:**")
+                        email_query1 = "Student asking about how to submit transcripts for admission"
+                        email_query2 = "Student needs help with financial aid deadlines"
+
+                        st.markdown(f"**To:** student@example.com")
+                        st.markdown(f"**Subject:** Re: Your Question")
+                        st.markdown(f"**Inquiry 1:**")
+                        if st.button("📋 Copy", key="demo_email_1", use_container_width=True):
+                            st.code(email_query1, language=None)
+                        st.caption(email_query1)
+
+                        st.markdown(f"**Inquiry 2:**")
+                        if st.button("📋 Copy", key="demo_email_2", use_container_width=True):
+                            st.code(email_query2, language=None)
+                        st.caption(email_query2)
+
+                        st.divider()
+                        st.markdown("**Meeting Bot:**")
+                        st.markdown("**Summary:** Advising Appointment")
+                        st.markdown("**Description:**")
+                        meeting_query1 = "Schedule a meeting to discuss course selection for next semester"
+                        meeting_query2 = "Need to meet with advisor to review degree progress and graduation timeline"
+
+                        if st.button("📋 Copy", key="demo_meeting_1", use_container_width=True):
+                            st.code(meeting_query1, language=None)
+                        st.caption(meeting_query1)
+
+                        if st.button("📋 Copy", key="demo_meeting_2", use_container_width=True):
+                            st.code(meeting_query2, language=None)
+                        st.caption(meeting_query2)
 
         chat_col = st.container()
 
@@ -432,7 +496,26 @@ else:
                 user_input = None
             elif st.session_state.is_processing:
                 # Show disabled state message instead of input
-                st.info("Processing your request...")
+                st.markdown(
+                    """
+                    <div style="
+                        background-color: #f0f2f6;
+                        border: 1px solid #d3d3d3;
+                        border-radius: 0.5rem;
+                        padding: 0.75rem 1rem;
+                        text-align: center;
+                        color: #31333F;
+                        font-size: 0.875rem;
+                        height: 3rem;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                    ">
+                        Processing your request...
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
                 user_input = None
             else:
                 user_input = st.chat_input("Ask the USF Campus Concierge...")
