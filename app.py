@@ -495,23 +495,20 @@ else:
                 )
                 user_input = None
             elif st.session_state.is_processing:
-                # Show disabled state message instead of input
+                # Show transparent overlay to prevent input while still showing the chat input
                 st.markdown(
                     """
                     <div style="
-                        background-color: #f0f2f6;
-                        border: 1px solid #d3d3d3;
+                        background-color: transparent;
+                        border: none;
                         border-radius: 0.5rem;
                         padding: 0.75rem 1rem;
-                        text-align: center;
-                        color: #31333F;
-                        font-size: 0.875rem;
                         height: 3rem;
                         display: flex;
                         align-items: center;
                         justify-content: center;
+                        pointer-events: none;
                     ">
-                        Processing your request...
                     </div>
                     """,
                     unsafe_allow_html=True
