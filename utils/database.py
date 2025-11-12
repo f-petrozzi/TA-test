@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from utils.supabase_client import get_supabase_client
+from utils.security import escape_sql_like
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ class ChatDatabase:
         if not query:
             return sessions
 
-        q = (query or "").lower()
+        q = escape_sql_like((query or "").lower())
         matching_sessions = {}
 
         # First pass: Find sessions that match by name

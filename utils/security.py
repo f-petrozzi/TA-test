@@ -55,6 +55,11 @@ def sanitize_user_input(text: str) -> str:
     return text[:MAX_INPUT_CHARS]
 
 
+def escape_sql_like(text: str) -> str:
+    """Escape SQL LIKE wildcards (%, _) to prevent enumeration attacks."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 _PROMPT_ATTACK_RULES: Tuple[_PromptRule, ...] = (
     _PromptRule(
         "system_override",

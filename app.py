@@ -239,7 +239,7 @@ else:
                     st.rerun()
 
             # Search
-            search_query = st.text_input("🔍 Search sessions", key="search_input")
+            search_query = sanitize_user_input(st.text_input("🔍 Search sessions", key="search_input"))
 
             # Filter sessions
             sessions = db.search_sessions(st.session_state.user_id, search_query)
@@ -338,7 +338,7 @@ else:
                             key=rename_key,
                         )
                         if st.button("Save name", key=f"{options_prefix}_rename_save", use_container_width=True):
-                            final_name = (rename_value or default_name).strip()
+                            final_name = sanitize_user_input((rename_value or default_name).strip())
                             if final_name != default_name:
                                 db.rename_session(st.session_state.current_session_id, final_name)
                             st.rerun()
